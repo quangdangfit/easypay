@@ -8,8 +8,9 @@ unexported.**
 
 ## Why
 
-- Mocking in unit tests is trivial — define a fake type that implements the
-  interface in the test file. No `mockgen`, no reflection.
+- Mocking in unit tests is trivial — `mockgen` (`go.uber.org/mock`) generates
+  type-safe mocks from each interface, kept under `internal/mocks/<pkg>/` and
+  regenerated via `make mocks`. See `.claude/rules/testing.md`.
 - Wiring lives in exactly one place (`cmd/server/main.go`); every other file
   reads the dependency graph by reading interface declarations.
 - Refactoring an implementation (e.g. swap MySQL for Postgres) doesn't ripple
@@ -68,7 +69,7 @@ consumer, …):
 |---|---|
 | `func New...() *Thing` (returns concrete) | Return interface type |
 | `*service.PaymentService` in a handler field | Replace with `service.Payments` |
-| Test file imports concrete struct from another package to mock | Define a fake satisfying the interface in the test file |
+| Test file imports concrete struct from another package to mock | Use the gomock mock under `internal/mocks/<pkg>/` (regenerate via `make mocks`) |
 | Constructor takes `*redis.Client` directly inside service | Wrap in a typed port (`cache.Locker`, `cache.IdempotencyChecker`) |
 | Two-tier interface chain: handler → public struct → unexported impl | Collapse to handler → interface → unexported impl |
 

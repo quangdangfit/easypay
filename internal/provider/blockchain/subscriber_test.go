@@ -38,9 +38,9 @@ func sampleLog() types.Log {
 func TestSubscriber_HandleLog_PersistsAndAdvancesCursor(t *testing.T) {
 	chain := &fakeChain{}
 	cur := newMemCursor()
-	repo := newMemPendingTx()
+	repo := newPendingTxStore(t)
 	cfg := ChainConfig{ChainID: 1, ContractAddress: common.HexToAddress("0xC0NTRACT"), RequiredConfirmations: 12}
-	s := NewSubscriber(chain, cfg, cur, repo)
+	s := NewSubscriber(chain, cfg, cur, repo.mock)
 
 	if err := s.handleLog(context.Background(), sampleLog()); err != nil {
 		t.Fatalf("handleLog: %v", err)
@@ -56,10 +56,10 @@ func TestSubscriber_HandleLog_PersistsAndAdvancesCursor(t *testing.T) {
 func TestSubscriber_HandleLog_DuplicateIsNoOp(t *testing.T) {
 	chain := &fakeChain{}
 	cur := newMemCursor()
-	repo := newMemPendingTx()
+	repo := newPendingTxStore(t)
 	repo.byHash["0x000000000000000000000000000000000000000000000000000000000000abc"] = &domain.PendingTx{}
 
-	s := NewSubscriber(chain, ChainConfig{ChainID: 1}, cur, repo)
+	s := NewSubscriber(chain, ChainConfig{ChainID: 1}, cur, repo.mock)
 	if err := s.handleLog(context.Background(), sampleLog()); err != nil {
 		t.Fatalf("dup should be no-op: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestSubscriber_HandleLog_DuplicateIsNoOp(t *testing.T) {
 
 func TestSubscriber_HandleLog_BadEventReturnsError(t *testing.T) {
 	chain := &fakeChain{}
-	s := NewSubscriber(chain, ChainConfig{ChainID: 1}, newMemCursor(), newMemPendingTx())
+	s := NewSubscriber(chain, ChainConfig{ChainID: 1}, newMemCursor(), newPendingTxStore(t).mock)
 	bad := types.Log{TxHash: common.HexToHash("0xdead")} // empty topics → ParsePaymentEvent fails
 	if err := s.handleLog(context.Background(), bad); err == nil {
 		t.Fatal("expected parse error")
@@ -76,7 +76,7 @@ func TestSubscriber_HandleLog_BadEventReturnsError(t *testing.T) {
 
 func TestSubscriber_RunOnce_Subscribes(t *testing.T) {
 	chain := &fakeChain{}
-	s := NewSubscriber(chain, ChainConfig{ChainID: 1}, newMemCursor(), newMemPendingTx())
+	s := NewSubscriber(chain, ChainConfig{ChainID: 1}, newMemCursor(), newPendingTxStore(t).mock)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	err := s.runOnce(ctx)
@@ -90,7 +90,7 @@ func TestSubscriber_RunOnce_Subscribes(t *testing.T) {
 
 func TestSubscriber_RunOnce_SubscribeError(t *testing.T) {
 	chain := &fakeChain{subErr: errors.New("ws failed")}
-	s := NewSubscriber(chain, ChainConfig{ChainID: 1}, newMemCursor(), newMemPendingTx())
+	s := NewSubscriber(chain, ChainConfig{ChainID: 1}, newMemCursor(), newPendingTxStore(t).mock)
 	if err := s.runOnce(context.Background()); err == nil {
 		t.Fatal("expected error")
 	}
@@ -98,7 +98,7 @@ func TestSubscriber_RunOnce_SubscribeError(t *testing.T) {
 
 func TestSubscriber_Run_StopsOnContextCancel(t *testing.T) {
 	chain := &fakeChain{}
-	s := NewSubscriber(chain, ChainConfig{ChainID: 1}, newMemCursor(), newMemPendingTx())
+	s := NewSubscriber(chain, ChainConfig{ChainID: 1}, newMemCursor(), newPendingTxStore(t).mock)
 	s.BackoffMin = time.Millisecond
 	s.BackoffMax = 5 * time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)

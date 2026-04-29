@@ -9,11 +9,11 @@ import (
 func TestListener_RunStopsAllSubLoopsOnCancel(t *testing.T) {
 	chain := &fakeChain{blockNum: 0}
 	cur := newMemCursor()
-	repo := newMemPendingTx()
-	orders := &fakeOrders{}
-	pub := &fakePub{}
+	repo := newPendingTxStore(t)
+	orders := newOrderStore(t)
+	pub := newEventCapture(t)
 
-	l := NewListener(chain, ChainConfig{ChainID: 1}, cur, repo, orders, pub)
+	l := NewListener(chain, ChainConfig{ChainID: 1}, cur, repo.mock, orders.mock, pub.mock)
 	// Tighten loops so cancellation is observable quickly.
 	l.Backfill.Interval = 5 * time.Millisecond
 	l.Confirmation.BlockTime = 5 * time.Millisecond

@@ -2,7 +2,12 @@
 
 ## Unit Tests
 - Every service and repository has unit tests.
-- Mock external dependencies via interfaces. Use hand-written mocks, not mockgen (simpler for this project size).
+- Mock external dependencies via interfaces. Use **gomock** (`go.uber.org/mock`), not hand-written fakes.
+  - Generated mocks live in `internal/mocks/<pkg>/` (`repomock`, `cachemock`, `kafkamock`, `stripemock`, `bcmock`, `svcmock`, `handlermock`).
+  - Add a `//go:generate mockgen ...` directive to `internal/mocks/doc.go` whenever you add a new interface.
+  - Run `make mocks` to regenerate (requires `go install go.uber.org/mock/mockgen@latest`).
+  - For stateful behaviour (e.g. an in-memory `OrderRepository`), wire `EXPECT().DoAndReturn(...)` with a closure over a map; see `internal/service/mock_helpers_test.go` and `internal/provider/blockchain/mock_helpers_test.go` for shared patterns.
+  - **Exception**: when an interface is defined in the *same* package as the test, importing its mock from `internal/mocks/<pkg>/` causes an import cycle. In that narrow case keep a small in-package fake (see `noopHandler` in `internal/kafka/consumer_test.go`, `failClient` in `internal/provider/stripe/breaker_test.go`, `fakeChain` / `memCursor` in `internal/provider/blockchain/`).
 - Table-driven tests for functions with multiple input/output cases.
 - Test file lives next to source file: `payment_service.go` → `payment_service_test.go`.
 - Run: `go test ./internal/... -v -race`

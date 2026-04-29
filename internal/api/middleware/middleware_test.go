@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"context"
+	"errors"
 	"io"
 	"net/http/httptest"
 	"strconv"
@@ -10,10 +10,16 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"go.uber.org/mock/gomock"
 
 	"github.com/quangdangfit/easypay/internal/domain"
+	repomock "github.com/quangdangfit/easypay/internal/mocks/repo"
 	"github.com/quangdangfit/easypay/pkg/hmac"
 )
+
+// errAuth is a sentinel returned by GetByAPIKey when the merchant doesn't exist.
+// Shared with ratelimit_test.go.
+var errAuth = errors.New("merchant not found")
 
 // --- RequestID ---
 
@@ -22,7 +28,6 @@ func TestRequestID_GeneratesWhenMissing(t *testing.T) {
 	var seen string
 	app.Use(RequestID())
 	app.Get("/", func(c *fiber.Ctx) error {
-		// Middleware stores the id in Locals + the response header.
 		seen, _ = c.Locals("request_id").(string)
 		return c.SendStatus(200)
 	})
@@ -55,26 +60,19 @@ func TestRequestID_PreservesIncoming(t *testing.T) {
 
 // --- HMAC Auth ---
 
-type fakeMerchants struct {
-	m map[string]*domain.Merchant
-}
-
-func (f *fakeMerchants) GetByAPIKey(ctx context.Context, apiKey string) (*domain.Merchant, error) {
-	if v, ok := f.m[apiKey]; ok {
-		return v, nil
+// authApp builds a Fiber app with HMACAuth wired to a mock MerchantRepository
+// that returns merchant for "k" and errAuth otherwise.
+func authApp(t *testing.T, merchant *domain.Merchant) *fiber.App {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockMerchantRepository(ctrl)
+	if merchant != nil {
+		repo.EXPECT().GetByAPIKey(gomock.Any(), "k").Return(merchant, nil).AnyTimes()
 	}
-	return nil, errAuth
-}
+	repo.EXPECT().GetByAPIKey(gomock.Any(), gomock.Not("k")).Return(nil, errAuth).AnyTimes()
 
-var errAuth = &fauxErr{}
-
-type fauxErr struct{}
-
-func (e *fauxErr) Error() string { return "not found" }
-
-func newAuthApp(merchants *fakeMerchants) *fiber.App {
 	app := fiber.New()
-	app.Use(HMACAuth(merchants, 5*time.Minute))
+	app.Use(HMACAuth(repo, 5*time.Minute))
 	app.Post("/", func(c *fiber.Ctx) error {
 		m := c.Locals(LocalsMerchant).(*domain.Merchant)
 		return c.SendString(m.MerchantID)
@@ -91,7 +89,7 @@ func TestHMAC_HappyPath(t *testing.T) {
 		MerchantID: "M1", APIKey: "k", SecretKey: "s",
 		Status: domain.MerchantStatusActive,
 	}
-	app := newAuthApp(&fakeMerchants{m: map[string]*domain.Merchant{"k": merchant}})
+	app := authApp(t, merchant)
 	body := `{"a":1}`
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	req := httptest.NewRequest("POST", "/", strings.NewReader(body))
@@ -109,7 +107,7 @@ func TestHMAC_HappyPath(t *testing.T) {
 }
 
 func TestHMAC_RejectsMissingHeaders(t *testing.T) {
-	app := newAuthApp(&fakeMerchants{})
+	app := authApp(t, nil)
 	resp, _ := app.Test(httptest.NewRequest("POST", "/", strings.NewReader("{}")))
 	if resp.StatusCode != 401 {
 		t.Fatalf("status %d", resp.StatusCode)
@@ -118,7 +116,7 @@ func TestHMAC_RejectsMissingHeaders(t *testing.T) {
 
 func TestHMAC_RejectsBadTimestamp(t *testing.T) {
 	merchant := &domain.Merchant{MerchantID: "M1", APIKey: "k", SecretKey: "s", Status: domain.MerchantStatusActive}
-	app := newAuthApp(&fakeMerchants{m: map[string]*domain.Merchant{"k": merchant}})
+	app := authApp(t, merchant)
 
 	body := "{}"
 	old := strconv.FormatInt(time.Now().Add(-1*time.Hour).Unix(), 10)
@@ -134,7 +132,7 @@ func TestHMAC_RejectsBadTimestamp(t *testing.T) {
 
 func TestHMAC_RejectsBadSignature(t *testing.T) {
 	merchant := &domain.Merchant{MerchantID: "M1", APIKey: "k", SecretKey: "s", Status: domain.MerchantStatusActive}
-	app := newAuthApp(&fakeMerchants{m: map[string]*domain.Merchant{"k": merchant}})
+	app := authApp(t, merchant)
 	body := "{}"
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	req := httptest.NewRequest("POST", "/", strings.NewReader(body))
@@ -149,7 +147,7 @@ func TestHMAC_RejectsBadSignature(t *testing.T) {
 
 func TestHMAC_RejectsSuspended(t *testing.T) {
 	merchant := &domain.Merchant{MerchantID: "M1", APIKey: "k", SecretKey: "s", Status: domain.MerchantStatusSuspended}
-	app := newAuthApp(&fakeMerchants{m: map[string]*domain.Merchant{"k": merchant}})
+	app := authApp(t, merchant)
 	body := "{}"
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	req := httptest.NewRequest("POST", "/", strings.NewReader(body))

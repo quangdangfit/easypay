@@ -1,31 +1,19 @@
 package handler
 
 import (
-	"context"
 	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
+	"go.uber.org/mock/gomock"
 
 	"github.com/quangdangfit/easypay/internal/api/middleware"
 	"github.com/quangdangfit/easypay/internal/domain"
+	svcmock "github.com/quangdangfit/easypay/internal/mocks/service"
 	"github.com/quangdangfit/easypay/internal/service"
 )
-
-type fakeWebhooks struct {
-	processErr error
-	refund     *service.RefundResult
-	refundErr  error
-}
-
-func (f *fakeWebhooks) Process(ctx context.Context, payload []byte, sig string) error {
-	return f.processErr
-}
-func (f *fakeWebhooks) CreateRefund(ctx context.Context, in service.RefundInput) (*service.RefundResult, error) {
-	return f.refund, f.refundErr
-}
 
 func newRefundApp(svc service.Webhooks) *fiber.App {
 	app := fiber.New()
@@ -39,9 +27,12 @@ func newRefundApp(svc service.Webhooks) *fiber.App {
 }
 
 func TestRefundHandler_HappyPath(t *testing.T) {
-	app := newRefundApp(&fakeWebhooks{refund: &service.RefundResult{
-		OrderID: "ORD-1", RefundID: "re_x", Status: "succeeded", Amount: 500, Currency: "usd",
-	}})
+	ctrl := gomock.NewController(t)
+	svc := svcmock.NewMockWebhooks(ctrl)
+	svc.EXPECT().CreateRefund(gomock.Any(), gomock.Any()).
+		Return(&service.RefundResult{OrderID: "ORD-1", RefundID: "re_x", Status: "succeeded", Amount: 500, Currency: "usd"}, nil)
+
+	app := newRefundApp(svc)
 	req := httptest.NewRequest("POST", "/api/payments/ORD-1/refund", strings.NewReader(`{"amount":500,"reason":"requested_by_customer"}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
@@ -51,7 +42,12 @@ func TestRefundHandler_HappyPath(t *testing.T) {
 }
 
 func TestRefundHandler_EmptyBodyAllowed(t *testing.T) {
-	app := newRefundApp(&fakeWebhooks{refund: &service.RefundResult{OrderID: "x", RefundID: "re"}})
+	ctrl := gomock.NewController(t)
+	svc := svcmock.NewMockWebhooks(ctrl)
+	svc.EXPECT().CreateRefund(gomock.Any(), gomock.Any()).
+		Return(&service.RefundResult{OrderID: "x", RefundID: "re"}, nil)
+
+	app := newRefundApp(svc)
 	req := httptest.NewRequest("POST", "/api/payments/ORD-1/refund", nil)
 	resp, _ := app.Test(req)
 	if resp.StatusCode != 202 {
@@ -60,7 +56,11 @@ func TestRefundHandler_EmptyBodyAllowed(t *testing.T) {
 }
 
 func TestRefundHandler_PropagatesError(t *testing.T) {
-	app := newRefundApp(&fakeWebhooks{refundErr: errors.New("stripe down")})
+	ctrl := gomock.NewController(t)
+	svc := svcmock.NewMockWebhooks(ctrl)
+	svc.EXPECT().CreateRefund(gomock.Any(), gomock.Any()).Return(nil, errors.New("stripe down"))
+
+	app := newRefundApp(svc)
 	req := httptest.NewRequest("POST", "/api/payments/ORD-1/refund", nil)
 	resp, _ := app.Test(req)
 	if resp.StatusCode != 500 {
@@ -69,8 +69,11 @@ func TestRefundHandler_PropagatesError(t *testing.T) {
 }
 
 func TestRefundHandler_RejectsMissingMerchant(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := svcmock.NewMockWebhooks(ctrl)
+
 	app := fiber.New()
-	h := NewRefundHandler(&fakeWebhooks{})
+	h := NewRefundHandler(svc)
 	app.Post("/api/payments/:id/refund", h.Create)
 	resp, _ := app.Test(httptest.NewRequest("POST", "/api/payments/x/refund", nil))
 	if resp.StatusCode != 401 {
@@ -79,10 +82,13 @@ func TestRefundHandler_RejectsMissingMerchant(t *testing.T) {
 }
 
 func TestRefundHandler_RejectsMissingID(t *testing.T) {
-	app := newRefundApp(&fakeWebhooks{})
+	ctrl := gomock.NewController(t)
+	svc := svcmock.NewMockWebhooks(ctrl)
+
+	app := newRefundApp(svc)
 	app.Post("/api/payments//refund", func(c *fiber.Ctx) error {
 		// Fiber strips empty params, so we hit the catch route to test BadRequest path explicitly.
-		return NewRefundHandler(&fakeWebhooks{}).Create(c)
+		return NewRefundHandler(svc).Create(c)
 	})
 	req := httptest.NewRequest("POST", "/api/payments//refund", nil)
 	resp, _ := app.Test(req)

@@ -5,11 +5,11 @@ BIN_DIR  := bin
 PKG      := github.com/quangdangfit/easypay
 LDFLAGS  := -s -w
 
-.PHONY: help run build tidy lint test unittest test-integration migrate up down logs clean bench
+.PHONY: help run build tidy lint test unittest test-integration migrate up down logs clean bench mocks
 
 # Packages to count toward coverage (everything user-written, excluding
-# main entry points, integration tests, and the bench tool).
-SOURCE_PKGS := $(shell go list ./... | grep -v '/cmd/' | grep -v '/integration_test' | tr '\n' ',')
+# main entry points, integration tests, generated mocks, and the bench tool).
+SOURCE_PKGS := $(shell go list ./... | grep -v '/cmd/' | grep -v '/integration_test' | grep -v '/internal/mocks' | tr '\n' ',')
 
 help:
 	@echo "Targets:"
@@ -21,6 +21,7 @@ help:
 	@echo "  unittest          - unit tests with coverage profile (CI target)"
 	@echo "  test-integration  - integration tests (needs Docker)"
 	@echo "  bench             - run bench harness (50 workers x 1000 req)"
+	@echo "  mocks             - regenerate gomock mocks (go.uber.org/mock)"
 	@echo "  migrate           - apply SQL migrations"
 	@echo "  up / down / logs  - manage docker-compose stack"
 
@@ -50,6 +51,10 @@ unittest:
 
 test-integration:
 	EASYPAY_INTEGRATION=1 go test -tags integration ./integration_test/... -v -count=1 -timeout 600s
+
+mocks:
+	@command -v mockgen >/dev/null 2>&1 || { echo "Install: go install go.uber.org/mock/mockgen@latest"; exit 1; }
+	go generate ./...
 
 migrate:
 	@./scripts/migrate.sh up

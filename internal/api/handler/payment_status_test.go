@@ -1,42 +1,17 @@
 package handler
 
 import (
-	"context"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"go.uber.org/mock/gomock"
 
 	"github.com/quangdangfit/easypay/internal/api/middleware"
 	"github.com/quangdangfit/easypay/internal/domain"
+	repomock "github.com/quangdangfit/easypay/internal/mocks/repo"
 	"github.com/quangdangfit/easypay/internal/repository"
 )
-
-type fakeStatusRepo struct {
-	byID map[string]*domain.Order
-}
-
-func (f *fakeStatusRepo) Create(context.Context, *domain.Order) error { return nil }
-func (f *fakeStatusRepo) GetByOrderID(_ context.Context, id string) (*domain.Order, error) {
-	if o, ok := f.byID[id]; ok {
-		return o, nil
-	}
-	return nil, repository.ErrNotFound
-}
-func (f *fakeStatusRepo) GetByPaymentIntentID(context.Context, string) (*domain.Order, error) {
-	return nil, repository.ErrNotFound
-}
-func (f *fakeStatusRepo) UpdateStatus(context.Context, string, domain.OrderStatus, string) error {
-	return nil
-}
-func (f *fakeStatusRepo) UpdateCheckout(context.Context, string, string, string, string) error {
-	return nil
-}
-func (f *fakeStatusRepo) BatchCreate(context.Context, []*domain.Order) error { return nil }
-func (f *fakeStatusRepo) GetPendingBefore(context.Context, time.Time, int) ([]*domain.Order, error) {
-	return nil, nil
-}
 
 func newStatusApp(repo repository.OrderRepository, merchantID string) *fiber.App {
 	app := fiber.New()
@@ -50,9 +25,11 @@ func newStatusApp(repo repository.OrderRepository, merchantID string) *fiber.App
 }
 
 func TestPaymentStatus_HappyPath(t *testing.T) {
-	repo := &fakeStatusRepo{byID: map[string]*domain.Order{
-		"ORD-1": {OrderID: "ORD-1", MerchantID: "M1", Amount: 1500, Currency: "USD", Status: domain.OrderStatusPaid},
-	}}
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockOrderRepository(ctrl)
+	repo.EXPECT().GetByOrderID(gomock.Any(), "ORD-1").
+		Return(&domain.Order{OrderID: "ORD-1", MerchantID: "M1", Amount: 1500, Currency: "USD", Status: domain.OrderStatusPaid}, nil)
+
 	app := newStatusApp(repo, "M1")
 	resp, err := app.Test(httptest.NewRequest("GET", "/api/payments/ORD-1", nil))
 	if err != nil {
@@ -64,7 +41,11 @@ func TestPaymentStatus_HappyPath(t *testing.T) {
 }
 
 func TestPaymentStatus_NotFound(t *testing.T) {
-	app := newStatusApp(&fakeStatusRepo{}, "M1")
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockOrderRepository(ctrl)
+	repo.EXPECT().GetByOrderID(gomock.Any(), gomock.Any()).Return(nil, repository.ErrNotFound)
+
+	app := newStatusApp(repo, "M1")
 	resp, _ := app.Test(httptest.NewRequest("GET", "/api/payments/missing", nil))
 	if resp.StatusCode != 404 {
 		t.Fatalf("status %d", resp.StatusCode)
@@ -72,9 +53,11 @@ func TestPaymentStatus_NotFound(t *testing.T) {
 }
 
 func TestPaymentStatus_OtherMerchantHidden(t *testing.T) {
-	repo := &fakeStatusRepo{byID: map[string]*domain.Order{
-		"ORD-1": {OrderID: "ORD-1", MerchantID: "M2"},
-	}}
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockOrderRepository(ctrl)
+	repo.EXPECT().GetByOrderID(gomock.Any(), gomock.Any()).
+		Return(&domain.Order{OrderID: "ORD-1", MerchantID: "M2"}, nil)
+
 	app := newStatusApp(repo, "M1")
 	resp, _ := app.Test(httptest.NewRequest("GET", "/api/payments/ORD-1", nil))
 	if resp.StatusCode != 404 {
@@ -83,8 +66,12 @@ func TestPaymentStatus_OtherMerchantHidden(t *testing.T) {
 }
 
 func TestPaymentStatus_RejectsMissingMerchant(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockOrderRepository(ctrl)
+	// Handler bails out at merchant check before any repo call.
+
 	app := fiber.New()
-	h := NewPaymentStatusHandler(&fakeStatusRepo{})
+	h := NewPaymentStatusHandler(repo)
 	app.Get("/api/payments/:id", h.Get)
 	resp, _ := app.Test(httptest.NewRequest("GET", "/api/payments/x", nil))
 	if resp.StatusCode != 401 {

@@ -5,17 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
-	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
+	"go.uber.org/mock/gomock"
 
 	"github.com/quangdangfit/easypay/internal/config"
 	"github.com/quangdangfit/easypay/internal/domain"
 	"github.com/quangdangfit/easypay/internal/kafka"
+	repomock "github.com/quangdangfit/easypay/internal/mocks/repo"
 )
 
-// testKafkaCfg is shared across consumer tests; brokers point at a no-op
-// address, since the tests we run don't actually connect.
 func testKafkaCfg() config.KafkaConfig {
 	return config.KafkaConfig{
 		Brokers:        []string{"127.0.0.1:0"},
@@ -27,7 +26,15 @@ func testKafkaCfg() config.KafkaConfig {
 }
 
 func TestPaymentConsumer_BatchHappyPath(t *testing.T) {
-	repo := &batchRepo{}
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockOrderRepository(ctrl)
+	var inserted []*domain.Order
+	repo.EXPECT().BatchCreate(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, orders []*domain.Order) error {
+			inserted = append(inserted, orders...)
+			return nil
+		})
+
 	c := NewPaymentConsumer(repo)
 	msgs := []kafkago.Message{
 		mustEvent(t, "ORD-1", "M1", "TXN-1"),
@@ -36,13 +43,17 @@ func TestPaymentConsumer_BatchHappyPath(t *testing.T) {
 	if err := c.Handle(context.Background(), msgs); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
-	if len(repo.created) != 2 {
-		t.Fatalf("expected 2 created, got %d", len(repo.created))
+	if len(inserted) != 2 {
+		t.Fatalf("expected 2 inserted, got %d", len(inserted))
 	}
 }
 
 func TestPaymentConsumer_HandleOneTreatsDuplicateAsSuccess(t *testing.T) {
-	repo := &batchRepo{createErr: errors.New("Error 1062: Duplicate entry 'ORD-1' for key 'order_id'")}
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockOrderRepository(ctrl)
+	repo.EXPECT().Create(gomock.Any(), gomock.Any()).
+		Return(errors.New("Error 1062: Duplicate entry 'ORD-1' for key 'order_id'"))
+
 	c := NewPaymentConsumer(repo)
 	if err := c.HandleOne(context.Background(), mustEvent(t, "ORD-1", "M1", "TXN-1")); err != nil {
 		t.Fatalf("expected nil for duplicate, got %v", err)
@@ -50,7 +61,11 @@ func TestPaymentConsumer_HandleOneTreatsDuplicateAsSuccess(t *testing.T) {
 }
 
 func TestPaymentConsumer_RejectsMalformed(t *testing.T) {
-	c := NewPaymentConsumer(&batchRepo{})
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockOrderRepository(ctrl)
+	// Decode fails before BatchCreate is called.
+
+	c := NewPaymentConsumer(repo)
 	err := c.Handle(context.Background(), []kafkago.Message{{Value: []byte(`{"order_id":""}`)}})
 	if err == nil {
 		t.Fatal("expected error for malformed message")
@@ -58,7 +73,9 @@ func TestPaymentConsumer_RejectsMalformed(t *testing.T) {
 }
 
 func TestPaymentConsumer_NewBatchWiresUp(t *testing.T) {
-	c := NewPaymentConsumer(&batchRepo{})
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockOrderRepository(ctrl)
+	c := NewPaymentConsumer(repo)
 	bc := c.NewBatch(testKafkaCfg())
 	if bc == nil {
 		t.Fatal("nil batch consumer")
@@ -90,41 +107,4 @@ func mustEvent(t *testing.T, orderID, merchantID, txID string) kafkago.Message {
 		t.Fatal(err)
 	}
 	return kafkago.Message{Value: b}
-}
-
-// batchRepo is the in-test repository; matches repository.OrderRepository.
-// Defined separately so we can satisfy the time.Time signature without
-// importing it into the test file's main path.
-type batchRepo struct {
-	created   []*domain.Order
-	batchErr  error
-	createErr error
-}
-
-func (r *batchRepo) Create(ctx context.Context, o *domain.Order) error {
-	if r.createErr != nil {
-		return r.createErr
-	}
-	r.created = append(r.created, o)
-	return nil
-}
-func (r *batchRepo) GetByOrderID(ctx context.Context, id string) (*domain.Order, error) {
-	return nil, nil
-}
-func (r *batchRepo) GetByPaymentIntentID(ctx context.Context, p string) (*domain.Order, error) {
-	return nil, nil
-}
-func (r *batchRepo) UpdateStatus(ctx context.Context, id string, s domain.OrderStatus, p string) error {
-	return nil
-}
-func (r *batchRepo) UpdateCheckout(ctx context.Context, id, ssid, pi, url string) error { return nil }
-func (r *batchRepo) BatchCreate(ctx context.Context, orders []*domain.Order) error {
-	if r.batchErr != nil {
-		return r.batchErr
-	}
-	r.created = append(r.created, orders...)
-	return nil
-}
-func (r *batchRepo) GetPendingBefore(ctx context.Context, _ time.Time, _ int) ([]*domain.Order, error) {
-	return nil, nil
 }

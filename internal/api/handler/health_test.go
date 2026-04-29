@@ -1,17 +1,15 @@
 package handler
 
 import (
-	"context"
 	"errors"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
+	"go.uber.org/mock/gomock"
+
+	handlermock "github.com/quangdangfit/easypay/internal/mocks/handler"
 )
-
-type fakePinger struct{ err error }
-
-func (f *fakePinger) Ping(ctx context.Context) error { return f.err }
 
 func TestHealth_LivenessAlwaysOK(t *testing.T) {
 	app := fiber.New()
@@ -27,9 +25,16 @@ func TestHealth_LivenessAlwaysOK(t *testing.T) {
 }
 
 func TestHealth_ReadinessAllOK(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	db := handlermock.NewMockPinger(ctrl)
+	rd := handlermock.NewMockPinger(ctrl)
+	kf := handlermock.NewMockPinger(ctrl)
+	db.EXPECT().Ping(gomock.Any()).Return(nil)
+	rd.EXPECT().Ping(gomock.Any()).Return(nil)
+	kf.EXPECT().Ping(gomock.Any()).Return(nil)
+
 	app := fiber.New()
-	h := NewHealthHandler(&fakePinger{}, &fakePinger{}, &fakePinger{})
-	app.Get("/readyz", h.Readiness)
+	app.Get("/readyz", NewHealthHandler(db, rd, kf).Readiness)
 	resp, err := app.Test(httptest.NewRequest("GET", "/readyz", nil))
 	if err != nil {
 		t.Fatal(err)
@@ -40,9 +45,17 @@ func TestHealth_ReadinessAllOK(t *testing.T) {
 }
 
 func TestHealth_ReadinessOneDown(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	db := handlermock.NewMockPinger(ctrl)
+	rd := handlermock.NewMockPinger(ctrl)
+	kf := handlermock.NewMockPinger(ctrl)
+	// All three pings are issued in parallel; the handler waits on all of them.
+	db.EXPECT().Ping(gomock.Any()).Return(nil)
+	rd.EXPECT().Ping(gomock.Any()).Return(errors.New("redis down"))
+	kf.EXPECT().Ping(gomock.Any()).Return(nil)
+
 	app := fiber.New()
-	h := NewHealthHandler(&fakePinger{}, &fakePinger{err: errors.New("redis down")}, &fakePinger{})
-	app.Get("/readyz", h.Readiness)
+	app.Get("/readyz", NewHealthHandler(db, rd, kf).Readiness)
 	resp, err := app.Test(httptest.NewRequest("GET", "/readyz", nil))
 	if err != nil {
 		t.Fatal(err)

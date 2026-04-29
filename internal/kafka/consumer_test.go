@@ -11,6 +11,14 @@ import (
 	"github.com/quangdangfit/easypay/internal/config"
 )
 
+// noopHandler is a tiny in-package BatchHandler. We can't use kafkamock here
+// because that package imports internal/kafka (for PaymentEvent), which would
+// create an import cycle for tests in package kafka itself.
+type noopHandler struct{}
+
+func (noopHandler) Handle(context.Context, []kafkago.Message) error  { return nil }
+func (noopHandler) HandleOne(context.Context, kafkago.Message) error { return nil }
+
 func testCfg() config.KafkaConfig {
 	return config.KafkaConfig{
 		Brokers:        []string{"127.0.0.1:1"},
@@ -21,20 +29,6 @@ func testCfg() config.KafkaConfig {
 	}
 }
 
-type noopHandler struct {
-	batchErr error
-	oneErr   error
-	calls    int
-}
-
-func (h *noopHandler) Handle(ctx context.Context, msgs []kafkago.Message) error {
-	h.calls++
-	return h.batchErr
-}
-func (h *noopHandler) HandleOne(ctx context.Context, msg kafkago.Message) error {
-	return h.oneErr
-}
-
 // NOTE: kafka.NewReader spawns background goroutines that don't terminate
 // without a real broker. Calling Reader.Close() in tests blocks indefinitely
 // while the consumer-group dialer keeps retrying. We therefore exercise
@@ -43,7 +37,7 @@ func (h *noopHandler) HandleOne(ctx context.Context, msg kafkago.Message) error 
 // internal/consumer/payment_consumer_test.go (TestPaymentConsumer_NewBatchWiresUp).
 
 func TestNewBatchConsumer_WiresDefaults(t *testing.T) {
-	c := NewBatchConsumer(testCfg(), "topic", &noopHandler{})
+	c := NewBatchConsumer(testCfg(), "topic", noopHandler{})
 	if c == nil {
 		t.Fatal("nil consumer")
 	}
@@ -70,6 +64,7 @@ func TestBatchConsumer_ToDLQ_BadBrokerLogs(t *testing.T) {
 	// timeout because nothing answers on 127.0.0.1:1, exercising the
 	// log-and-continue branch.
 	c := &BatchConsumer{
+		Handler: noopHandler{},
 		dlq: &kafkago.Writer{
 			Addr:         kafkago.TCP("127.0.0.1:1"),
 			Topic:        "dlq",

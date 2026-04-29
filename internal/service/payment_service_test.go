@@ -3,82 +3,16 @@ package service
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/quangdangfit/easypay/internal/domain"
-	"github.com/quangdangfit/easypay/internal/kafka"
-	"github.com/quangdangfit/easypay/internal/provider/stripe"
 )
 
-type fakeIdem struct {
-	store map[string][]byte
-}
-
-func (f *fakeIdem) Check(ctx context.Context, key string) (bool, []byte, error) {
-	if f.store == nil {
-		return false, nil, nil
-	}
-	v, ok := f.store[key]
-	return ok, v, nil
-}
-
-func (f *fakeIdem) Set(ctx context.Context, key string, response []byte, ttl time.Duration) error {
-	if f.store == nil {
-		f.store = map[string][]byte{}
-	}
-	f.store[key] = response
-	return nil
-}
-
-type fakeStripe struct {
-	calls int
-}
-
-func (f *fakeStripe) CreateCheckoutSession(ctx context.Context, req stripe.CreateCheckoutRequest, idem string) (*stripe.CheckoutSession, error) {
-	f.calls++
-	return &stripe.CheckoutSession{
-		ID:              "cs_test_123",
-		URL:             "https://checkout.stripe.com/cs_test_123",
-		PaymentIntentID: "pi_test_123",
-		ClientSecret:    "pi_test_123_secret_xyz",
-	}, nil
-}
-func (f *fakeStripe) CreatePaymentIntent(ctx context.Context, req stripe.CreatePaymentIntentRequest, idem string) (*stripe.PaymentIntent, error) {
-	return nil, nil
-}
-func (f *fakeStripe) GetPaymentIntent(ctx context.Context, id string) (*stripe.PaymentIntent, error) {
-	return nil, nil
-}
-func (f *fakeStripe) GetCheckoutSession(ctx context.Context, id string) (*stripe.CheckoutSession, error) {
-	return nil, nil
-}
-func (f *fakeStripe) CreateRefund(ctx context.Context, req stripe.CreateRefundRequest, idem string) (*stripe.Refund, error) {
-	return nil, nil
-}
-func (f *fakeStripe) VerifyWebhookSignature(payload []byte, sigHeader, secret string) (*stripe.Event, error) {
-	return nil, nil
-}
-
-type fakePublisher struct {
-	events    []kafka.PaymentEvent
-	confirmed []kafka.PaymentConfirmedEvent
-}
-
-func (f *fakePublisher) PublishPaymentEvent(ctx context.Context, e kafka.PaymentEvent) error {
-	f.events = append(f.events, e)
-	return nil
-}
-func (f *fakePublisher) PublishPaymentConfirmed(ctx context.Context, e kafka.PaymentConfirmedEvent) error {
-	f.confirmed = append(f.confirmed, e)
-	return nil
-}
-func (f *fakePublisher) Close() error { return nil }
-
-func newSvc() (Payments, *fakeStripe, *fakePublisher, *fakeIdem) {
-	idem := &fakeIdem{}
-	stripeC := &fakeStripe{}
-	pub := &fakePublisher{}
-	svc := NewPaymentService(idem, stripeC, pub, nil, PaymentServiceOptions{
+func newSvc(t *testing.T) (Payments, *stripeStub, *eventCapture, *idemStore) {
+	t.Helper()
+	idem := newIdemStore(t)
+	stripeC := newStripeStub(t)
+	pub := newEventCapture(t)
+	svc := NewPaymentService(idem.mock, stripeC.mock, pub.mock, nil, PaymentServiceOptions{
 		DefaultCurrency: "USD",
 		CryptoContract:  "0xCONTRACT",
 		CryptoChainID:   11155111,
@@ -88,7 +22,7 @@ func newSvc() (Payments, *fakeStripe, *fakePublisher, *fakeIdem) {
 }
 
 func TestCreate_HappyPath(t *testing.T) {
-	svc, stripeC, pub, _ := newSvc()
+	svc, stripeC, pub, _ := newSvc(t)
 	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
 	res, err := svc.Create(context.Background(), CreatePaymentInput{
 		Merchant: merchant, TransactionID: "TXN-1", Amount: 1500, Currency: "USD",
@@ -99,8 +33,8 @@ func TestCreate_HappyPath(t *testing.T) {
 	if res.OrderID == "" || res.CheckoutURL == "" {
 		t.Fatalf("missing fields in result: %+v", res)
 	}
-	if stripeC.calls != 1 {
-		t.Fatalf("stripe should be called once, got %d", stripeC.calls)
+	if stripeC.createCalls != 1 {
+		t.Fatalf("stripe should be called once, got %d", stripeC.createCalls)
 	}
 	if len(pub.events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(pub.events))
@@ -108,7 +42,7 @@ func TestCreate_HappyPath(t *testing.T) {
 }
 
 func TestCreate_IdempotentDuplicate(t *testing.T) {
-	svc, stripeC, pub, _ := newSvc()
+	svc, stripeC, pub, _ := newSvc(t)
 	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
 	in := CreatePaymentInput{Merchant: merchant, TransactionID: "TXN-DUP", Amount: 1000, Currency: "USD"}
 
@@ -123,8 +57,8 @@ func TestCreate_IdempotentDuplicate(t *testing.T) {
 	if first.OrderID != second.OrderID {
 		t.Fatalf("idempotent calls returned different orders: %s vs %s", first.OrderID, second.OrderID)
 	}
-	if stripeC.calls != 1 {
-		t.Fatalf("stripe should be called only once across duplicates, got %d", stripeC.calls)
+	if stripeC.createCalls != 1 {
+		t.Fatalf("stripe should be called only once across duplicates, got %d", stripeC.createCalls)
 	}
 	if len(pub.events) != 1 {
 		t.Fatalf("expected 1 event for duplicate, got %d", len(pub.events))
@@ -132,7 +66,7 @@ func TestCreate_IdempotentDuplicate(t *testing.T) {
 }
 
 func TestCreate_CryptoPath(t *testing.T) {
-	svc, stripeC, _, _ := newSvc()
+	svc, stripeC, _, _ := newSvc(t)
 	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
 	res, err := svc.Create(context.Background(), CreatePaymentInput{
 		Merchant: merchant, TransactionID: "TXN-CRYPTO", Amount: 5000, Currency: "USD", Method: "crypto",
@@ -143,17 +77,17 @@ func TestCreate_CryptoPath(t *testing.T) {
 	if res.CryptoPayload == nil {
 		t.Fatalf("expected crypto payload")
 	}
-	if stripeC.calls != 0 {
+	if stripeC.createCalls != 0 {
 		t.Fatalf("stripe must not be called on crypto path")
 	}
 }
 
 func TestCreate_LazyCheckoutDoesNotHitStripe(t *testing.T) {
-	idem := &fakeIdem{}
-	stripeC := &fakeStripe{}
-	pub := &fakePublisher{}
-	pending := &fakePending{}
-	svc := NewPaymentService(idem, stripeC, pub, pending, PaymentServiceOptions{
+	idem := newIdemStore(t)
+	stripeC := newStripeStub(t)
+	pub := newEventCapture(t)
+	pending := newPendingStore(t)
+	svc := NewPaymentService(idem.mock, stripeC.mock, pub.mock, pending.mock, PaymentServiceOptions{
 		DefaultCurrency: "USD",
 		LazyCheckout:    true,
 		PublicBaseURL:   "https://pay.example",
@@ -166,8 +100,8 @@ func TestCreate_LazyCheckoutDoesNotHitStripe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if stripeC.calls != 0 {
-		t.Fatalf("expected 0 stripe calls, got %d", stripeC.calls)
+	if stripeC.createCalls != 0 {
+		t.Fatalf("expected 0 stripe calls, got %d", stripeC.createCalls)
 	}
 	if !contains(res.CheckoutURL, "https://pay.example/pay/") {
 		t.Fatalf("checkout url: %q", res.CheckoutURL)
@@ -175,13 +109,17 @@ func TestCreate_LazyCheckoutDoesNotHitStripe(t *testing.T) {
 	if !contains(res.CheckoutURL, "?t=") {
 		t.Fatalf("expected token in url: %q", res.CheckoutURL)
 	}
-	if pending.store == nil || pending.store[res.OrderID] == nil {
+	if pending.store[res.OrderID] == nil {
 		t.Fatal("expected pending order snapshot")
 	}
 }
 
 func TestCreate_LazyWithoutSecretSkipsToken(t *testing.T) {
-	svc := NewPaymentService(&fakeIdem{}, &fakeStripe{}, &fakePublisher{}, &fakePending{}, PaymentServiceOptions{
+	idem := newIdemStore(t)
+	stripeC := newStripeStub(t)
+	pub := newEventCapture(t)
+	pending := newPendingStore(t)
+	svc := NewPaymentService(idem.mock, stripeC.mock, pub.mock, pending.mock, PaymentServiceOptions{
 		LazyCheckout:  true,
 		PublicBaseURL: "https://pay.example",
 	})
@@ -209,7 +147,7 @@ func indexOf(s, sub string) int {
 }
 
 func TestCreate_RejectsInvalid(t *testing.T) {
-	svc, _, _, _ := newSvc()
+	svc, _, _, _ := newSvc(t)
 	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
 	cases := []CreatePaymentInput{
 		{Merchant: merchant, TransactionID: "", Amount: 1},
