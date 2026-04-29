@@ -36,3 +36,8 @@ bin/
 dist/
 tmp/
 
+
+# Stray local build outputs
+/bench
+/easypay
+
