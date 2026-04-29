@@ -631,3 +631,5 @@ chore(docker): add Kafka to docker-compose
 Types: feat, fix, refactor, perf, test, docs, chore, ci  
 Scope: payment, webhook, blockchain, kafka, redis, mysql, api, config  
 Always commit changes using git with descriptive conventional commit messages.
+
+**Author:** commit as the user configured in `git config user.name` / `user.email`. Do **not** append a `Co-Authored-By: Claude …` trailer — the project's history has none and we keep it that way.
