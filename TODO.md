@@ -6,14 +6,14 @@ A checklist for building the global payment gateway monolith (Stripe + blockchai
 
 ## Phase 0 — Project Bootstrap
 
-- [ ] Initialize Go module: `go mod init github.com/quangdangfit/easypay`
-- [ ] Set Go version to 1.22+ in `go.mod`
-- [ ] Create top-level directory skeleton: `cmd/`, `internal/`, `pkg/`, `migrations/`, `integration_test/`
-- [ ] Add `Makefile` with targets: `run`, `build`, `test`, `test-integration`, `migrate`, `lint`
-- [ ] Add `Dockerfile` (multi-stage Go build, distroless final image)
-- [ ] Add `.gitignore` entries for `bin/`, `.env`, `coverage.out`, IDE folders
-- [ ] Add `.env.example` listing every required env var from CLAUDE.md
-- [ ] Pin core deps: `gofiber/fiber/v2`, `go-sql-driver/mysql`, `redis/go-redis/v9`, `segmentio/kafka-go` (or `confluent-kafka-go`), `ethereum/go-ethereum`, `stripe/stripe-go/v76`, `prometheus/client_golang`, `testcontainers/testcontainers-go`
+- [x] Initialize Go module: `go mod init github.com/quangdangfit/easypay`
+- [x] Set Go version to 1.22+ in `go.mod`
+- [x] Create top-level directory skeleton: `cmd/`, `internal/`, `pkg/`, `migrations/`, `integration_test/`
+- [x] Add `Makefile` with targets: `run`, `build`, `test`, `test-integration`, `migrate`, `lint`
+- [x] Add `Dockerfile` (multi-stage Go build, distroless final image)
+- [x] Add `.gitignore` entries for `bin/`, `.env`, `coverage.out`, IDE folders
+- [x] Add `.env.example` listing every required env var from CLAUDE.md
+- [x] Pin core deps: `gofiber/fiber/v2`, `go-sql-driver/mysql`, `redis/go-redis/v9`, `segmentio/kafka-go`, `stripe/stripe-go/v76`, `prometheus/client_golang`, `golang-migrate/migrate/v4`, `google/uuid`, `golang.org/x/crypto` (go-ethereum + testcontainers added in later phases)
 - [ ] Install Stripe CLI locally for webhook forwarding (`stripe listen --forward-to localhost:8080/webhook/stripe`)
 
 ---
