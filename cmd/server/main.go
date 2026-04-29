@@ -133,6 +133,14 @@ func run() error {
 		}
 	}()
 
+	// Order reconciliation cron (Phase 6).
+	orderReconciler := service.NewOrderReconciliation(orderRepo, stripeClient, publisher)
+	go func() {
+		if err := orderReconciler.Run(consumerCtx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("order reconciler exited", "err", err)
+		}
+	}()
+
 	// Blockchain listener (Phase 5). Only spin up if a contract address is configured.
 	if cfg.Blockchain.ContractAddress != "" && cfg.Blockchain.RPCWebsocket != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

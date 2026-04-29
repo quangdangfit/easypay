@@ -31,10 +31,12 @@ func NewRouter(deps Deps) *fiber.App {
 	})
 
 	app.Use(middleware.RequestID())
+	app.Use(middleware.PrometheusMiddleware())
 
-	// Public health endpoints (no auth).
+	// Public health + metrics (no auth).
 	app.Get("/healthz", deps.Health.Liveness)
 	app.Get("/readyz", deps.Health.Readiness)
+	app.Get("/metrics", handler.PrometheusHandler())
 
 	// Stripe webhook — outside HMAC merchant auth (Stripe signs with its own
 	// secret, verified inside the handler).
