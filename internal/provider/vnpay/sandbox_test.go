@@ -156,18 +156,51 @@ func TestSandbox_BuildAndPing(t *testing.T) {
 	t.Logf("status: %d, content-length: %d", resp.StatusCode, len(body))
 
 	bodyStr := string(body)
+	finalURL := resp.Request.URL.String()
+	t.Logf("final URL: %s", finalURL)
+
 	switch {
 	case resp.StatusCode != 200:
 		t.Fatalf("signed URL got status %d (expected 200). Body head: %s",
 			resp.StatusCode, head(bodyStr, 400))
-	case containsAny(bodyStr, "Sai chữ ký", "Invalid signature", "Mã merchant không tồn tại", "Merchant không tồn tại"):
-		t.Fatalf("VNPay rejected our request — credentials or signature wrong:\n%s", head(bodyStr, 800))
-	case containsAny(bodyStr, "VNPAY", "vnpay", "ngân hàng", "Ngân hàng"):
-		t.Logf("✅ sandbox accepted the signed URL (page rendered)")
+
+	// VNPay redirects invalid requests to /paymentv2/Payment/Error.html?code=XX.
+	// The error page also embeds <div class="box-error"> and a form that POSTs
+	// to Error.html — both reliable signals.
+	case strings.Contains(finalURL, "/Payment/Error.html") ||
+		strings.Contains(bodyStr, "box-error") ||
+		strings.Contains(bodyStr, "Payment/Error.html"):
+		code := extractErrCode(finalURL, bodyStr)
+		t.Fatalf("VNPay rejected our request (error code=%s). Most likely cause: TmnCode unknown or HashSecret mismatch. Body head:\n%s",
+			code, head(bodyStr, 600))
+
+	// The valid payment form always contains the bank-selection grid +
+	// Vietnamese-language UI strings.
+	case containsAny(bodyStr, "vnp-bank", "Chọn ngân hàng", "select-bank", "Phương thức thanh toán"):
+		t.Logf("✅ sandbox accepted the signed URL — payment form rendered")
+
 	default:
-		t.Logf("response body head:\n%s", head(bodyStr, 400))
+		t.Logf("body head:\n%s", head(bodyStr, 400))
 		t.Log("⚠ couldn't auto-detect outcome; open the URL above in a browser to verify")
 	}
+}
+
+// extractErrCode pulls the `code=XX` query value from either the redirected
+// URL or anchors embedded in the error page.
+func extractErrCode(finalURL, body string) string {
+	if u, err := url.Parse(finalURL); err == nil {
+		if c := u.Query().Get("code"); c != "" {
+			return c
+		}
+	}
+	if i := strings.Index(body, "Payment/Error.html?code="); i >= 0 {
+		rest := body[i+len("Payment/Error.html?code="):]
+		end := strings.IndexAny(rest, "&\"' ")
+		if end > 0 {
+			return rest[:end]
+		}
+	}
+	return "unknown"
 }
 
 func envOr(k, def string) string {
