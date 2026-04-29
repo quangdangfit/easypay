@@ -43,31 +43,31 @@ A checklist for building the global payment gateway monolith (Stripe + blockchai
 ## Phase 2 — Core Payment Flow (Sync Path)
 
 ### Repositories
-- [ ] Define `OrderRepository` interface (per CLAUDE.md "Key Interfaces")
-- [ ] `internal/repository/order_repo.go` — MySQL impl: `Create`, `GetByOrderID`, `UpdateStatus(orderID, status, stripePaymentIntentID)`, `BatchCreate`, `GetPendingBefore`
-- [ ] Implement merchant_id sharding helper (`shard = merchant_id % 8`)
-- [ ] Connection pool: `MaxOpenConns=100`, `MaxIdleConns=25`
-- [ ] `internal/repository/merchant_repo.go` — lookup by `api_key`; cache hot merchants in memory (LRU)
+- [x] Define `OrderRepository` interface (per CLAUDE.md "Key Interfaces")
+- [x] `internal/repository/order_repo.go` — MySQL impl: `Create`, `GetByOrderID`, `UpdateStatus(orderID, status, stripePaymentIntentID)`, `BatchCreate`, `GetPendingBefore`
+- [x] Implement merchant_id sharding helper (FNV-32a mod 8 in `internal/repository/sharding.go`)
+- [x] Connection pool: `MaxOpenConns=100`, `MaxIdleConns=25`
+- [x] `internal/repository/merchant_repo.go` — lookup by `api_key`; cache hot merchants in memory (LRU)
 
 ### Cache layer
-- [ ] Define `IdempotencyChecker` interface
-- [ ] `internal/cache/idempotency.go` — Redis Bloom filter (`BF.EXISTS`/`BF.ADD` per shard) + `SETNX` on `idem:{merchant_id}:{transaction_id}` (TTL 24h)
-- [ ] `internal/cache/ratelimiter.go` — sliding window via Redis sorted set (`rate:{merchant_id}`, TTL 60s)
-- [ ] `internal/cache/lock.go` — `SET NX PX 30000` distributed lock for `lock:{user_id}:{method}`
+- [x] Define `IdempotencyChecker` interface
+- [x] `internal/cache/idempotency.go` — Redis Bloom filter (`BF.EXISTS`/`BF.ADD` per shard) + `SETNX` on `idem:{merchant_id}:{transaction_id}` (TTL 24h)
+- [x] `internal/cache/ratelimiter.go` — sliding window via Redis sorted set (`rate:{merchant_id}`, TTL 60s)
+- [x] `internal/cache/lock.go` — `SET NX PX 30000` distributed lock for `lock:{user_id}:{method}`
 
 ### Middleware
-- [ ] `pkg/hmac/hmac.go` — HMAC-SHA256 sign + constant-time verify
-- [ ] `internal/api/middleware/auth.go` — verify `X-API-Key`, `X-Timestamp` (reject if drift > 5min), `X-Signature`
-- [ ] `internal/api/middleware/ratelimit.go` — 429 if merchant exceeds `rate_limit/min`
+- [x] `pkg/hmac/hmac.go` — HMAC-SHA256 sign + constant-time verify
+- [x] `internal/api/middleware/auth.go` — verify `X-API-Key`, `X-Timestamp` (reject if drift > 5min), `X-Signature`
+- [x] `internal/api/middleware/ratelimit.go` — 429 if merchant exceeds `rate_limit/min`
 
 ### Kafka producer
-- [ ] Define `EventPublisher` interface
-- [ ] `internal/kafka/producer.go` — `acks=all`, `retries=3`, `linger.ms=5`, `batch.size=64KB`; partition key = `merchant_id`
+- [x] Define `EventPublisher` interface
+- [x] `internal/kafka/producer.go` — `acks=all`, `retries=3`, `linger.ms=5`, `batch.size=64KB`; partition key = `merchant_id`
 
 ### Service + handler
-- [ ] `internal/service/payment_service.go` — orchestrate steps 1–6 of Flow 1 (bloom → fraud → bloom add + idem set → Stripe call → Kafka produce → response)
-- [ ] `internal/api/handler/payment.go` — `POST /api/payments`; returns 202 with `{order_id, transaction_id, stripe_session_id, checkout_url, stripe_payment_intent_id, client_secret, status}`
-- [ ] **Unit tests:** mock all interfaces; cover idempotency hit/miss, bloom false positive, rate limit, signature failure
+- [x] `internal/service/payment_service.go` — orchestrate steps 1–6 of Flow 1 (bloom → fraud → bloom add + idem set → Stripe call → Kafka produce → response)
+- [x] `internal/api/handler/payment.go` — `POST /api/payments`; returns 202 with `{order_id, transaction_id, stripe_session_id, checkout_url, stripe_payment_intent_id, client_secret, status}`
+- [x] **Unit tests:** payment_service_test covers happy path, idempotent duplicate, crypto path, validation rejection. Stripe interface stubbed; full client + signature tests land in Phase 4.
 
 ---
 

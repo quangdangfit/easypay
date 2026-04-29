@@ -13,7 +13,12 @@ import (
 
 	"github.com/quangdangfit/easypay/internal/api"
 	"github.com/quangdangfit/easypay/internal/api/handler"
+	"github.com/quangdangfit/easypay/internal/cache"
 	"github.com/quangdangfit/easypay/internal/config"
+	"github.com/quangdangfit/easypay/internal/kafka"
+	"github.com/quangdangfit/easypay/internal/provider/stripe"
+	"github.com/quangdangfit/easypay/internal/repository"
+	"github.com/quangdangfit/easypay/internal/service"
 	"github.com/quangdangfit/easypay/pkg/logger"
 )
 
@@ -34,14 +39,54 @@ func run() error {
 	log := logger.L()
 	log.Info("starting easypay", "env", cfg.App.Env, "port", cfg.App.Port)
 
-	// In Phase 1, dependencies (DB / Redis / Kafka) are not wired yet — pass nil and
-	// readiness will simply report no checks. They will be wired in later phases.
-	healthH := handler.NewHealthHandler(nil, nil, nil)
+	// MySQL.
+	db, err := repository.OpenMySQL(cfg.DB)
+	if err != nil {
+		return fmt.Errorf("mysql: %w", err)
+	}
+	defer db.Close()
 
-	app := api.NewRouter(api.Deps{Health: healthH})
+	// Redis.
+	rc, err := cache.NewRedis(cfg.Redis)
+	if err != nil {
+		return fmt.Errorf("redis: %w", err)
+	}
+	defer rc.Close()
+
+	// Kafka producer.
+	publisher := kafka.NewPublisher(cfg.Kafka)
+	defer publisher.Close()
+
+	// Repos & cache helpers.
+	orderRepo := repository.NewOrderRepository(db)
+	_ = orderRepo // wired into consumers in later phases
+	merchantRepo := repository.NewMerchantRepository(db)
+	idem := cache.NewIdempotency(rc)
+	rl := cache.NewRateLimiter(rc)
+
+	// Stripe — Phase 4 will swap in the real client; until then use the stub.
+	stripeClient := stripe.NewStub()
+
+	// Service + handlers.
+	paySvc := service.NewPaymentService(idem, stripeClient, publisher, cfg.Stripe.DefaultCurrency,
+		cfg.Blockchain.ContractAddress, cfg.Blockchain.ChainID)
+	payH := handler.NewPaymentHandler(paySvc)
+
+	healthH := handler.NewHealthHandler(
+		&repository.MySQLPinger{DB: db},
+		&cache.RedisPinger{Client: rc},
+		kafka.NewPinger(cfg.Kafka),
+	)
+
+	app := api.NewRouter(api.Deps{
+		Health:      healthH,
+		Payment:     payH,
+		Merchants:   merchantRepo,
+		RateLimiter: rl,
+		HMACSkew:    cfg.Security.HMACTimestampSkew,
+	})
 
 	addr := fmt.Sprintf(":%d", cfg.App.Port)
-
 	errCh := make(chan error, 1)
 	go func() {
 		if err := app.Listen(addr); err != nil && !errors.Is(err, fiber.ErrServiceUnavailable) {
