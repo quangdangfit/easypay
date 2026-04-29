@@ -1,0 +1,62 @@
+{
+  "$schema": "https://code.claude.com/settings.schema.json",
+  "permissions": {
+    "allow": [
+      "Bash(go build ./...)",
+      "Bash(go run cmd/server/main.go)",
+      "Bash(go test ./...)",
+      "Bash(go test ./... -v -race -count=1)",
+      "Bash(go test ./integration_test/... *)",
+      "Bash(go mod *)",
+      "Bash(go fmt ./...)",
+      "Bash(go vet ./...)",
+      "Bash(golangci-lint run ./...)",
+      "Bash(make *)",
+      "Bash(docker compose *)",
+      "Bash(docker-compose *)",
+      "Bash(docker build *)",
+      "Bash(docker ps *)",
+      "Bash(docker logs *)",
+      "Bash(migrate *)",
+      "Bash(cat *)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(grep *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git branch *)",
+      "Bash(git checkout *)",
+      "Bash(git stash *)",
+      "Read",
+      "Write",
+      "Edit",
+      "MultiEdit",
+      "Glob",
+      "Grep",
+      "LS"
+    ],
+    "deny": [
+      "Read(.env*)",
+      "Read(*secret*)",
+      "Read(*credential*)",
+      "Bash(rm -rf /)",
+      "Bash(rm -rf ~)",
+      "Bash(docker rm *)",
+      "Bash(docker rmi *)",
+      "Bash(git push *)",
+      "Bash(git reset --hard *)",
+      "Bash(curl * | bash)",
+      "Bash(wget * | bash)"
+    ]
+  },
+  "env": {
+    "BASH_DEFAULT_TIMEOUT_MS": "30000",
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "16384"
+  }
+}
