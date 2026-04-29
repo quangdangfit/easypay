@@ -82,6 +82,7 @@ func newSvc() (*PaymentService, *fakeStripe, *fakePublisher, *fakeIdem) {
 		DefaultCurrency: "USD",
 		CryptoContract:  "0xCONTRACT",
 		CryptoChainID:   11155111,
+		// LazyCheckout off → eager Stripe path (existing tests assume this)
 	})
 	return svc, stripeC, pub, idem
 }

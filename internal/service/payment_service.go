@@ -14,6 +14,7 @@ import (
 	"github.com/quangdangfit/easypay/internal/domain"
 	"github.com/quangdangfit/easypay/internal/kafka"
 	"github.com/quangdangfit/easypay/internal/provider/stripe"
+	"github.com/quangdangfit/easypay/pkg/checkouttoken"
 )
 
 var (
@@ -68,16 +69,20 @@ type PaymentService struct {
 	// Lazy checkout: if true, POST /api/payments returns a self-hosted URL
 	// and the Stripe Session is created on first hit of /pay/:id. Lets the
 	// merchant API scale beyond Stripe's per-account rate limits.
-	lazyCheckout  bool
-	publicBaseURL string
+	lazyCheckout      bool
+	publicBaseURL     string
+	checkoutSecret    string        // signs /pay/:id?t=<token> URLs
+	checkoutTokenTTL  time.Duration // how long a hosted-checkout URL is valid
 }
 
 type PaymentServiceOptions struct {
-	DefaultCurrency string
-	CryptoContract  string
-	CryptoChainID   int64
-	LazyCheckout    bool
-	PublicBaseURL   string
+	DefaultCurrency  string
+	CryptoContract   string
+	CryptoChainID    int64
+	LazyCheckout     bool
+	PublicBaseURL    string
+	CheckoutSecret   string
+	CheckoutTokenTTL time.Duration
 }
 
 func NewPaymentService(
@@ -87,16 +92,22 @@ func NewPaymentService(
 	pending cache.PendingOrderStore,
 	opts PaymentServiceOptions,
 ) *PaymentService {
+	ttl := opts.CheckoutTokenTTL
+	if ttl == 0 {
+		ttl = 24 * time.Hour
+	}
 	return &PaymentService{
-		idem:           idem,
-		stripe:         stripeC,
-		publisher:      publisher,
-		pending:        pending,
-		currency:       opts.DefaultCurrency,
-		cryptoContract: opts.CryptoContract,
-		cryptoChainID:  opts.CryptoChainID,
-		lazyCheckout:   opts.LazyCheckout,
-		publicBaseURL:  opts.PublicBaseURL,
+		idem:             idem,
+		stripe:           stripeC,
+		publisher:        publisher,
+		pending:          pending,
+		currency:         opts.DefaultCurrency,
+		cryptoContract:   opts.CryptoContract,
+		cryptoChainID:    opts.CryptoChainID,
+		lazyCheckout:     opts.LazyCheckout,
+		publicBaseURL:    opts.PublicBaseURL,
+		checkoutSecret:   opts.CheckoutSecret,
+		checkoutTokenTTL: ttl,
 	}
 }
 
@@ -144,7 +155,15 @@ func (s *PaymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 		// Lazy: skip Stripe entirely. The first hit on /pay/:id will create
 		// the session. Stash a snapshot in Redis so the public handler can
 		// resolve the order even before the consumer commits to MySQL.
-		result.CheckoutURL = s.publicBaseURL + "/pay/" + orderID
+		token := ""
+		if s.checkoutSecret != "" {
+			token = checkouttoken.Sign(s.checkoutSecret, orderID, s.checkoutTokenTTL)
+		}
+		if token != "" {
+			result.CheckoutURL = s.publicBaseURL + "/pay/" + orderID + "?t=" + token
+		} else {
+			result.CheckoutURL = s.publicBaseURL + "/pay/" + orderID
+		}
 		if s.pending != nil {
 			_ = s.pending.Put(ctx, &cache.PendingOrder{
 				OrderID:       orderID,

@@ -83,6 +83,8 @@ func run() error {
 	rl := cache.NewRateLimiter(rc)
 	pendingOrders := cache.NewPendingOrderStore(rc)
 	locker := cache.NewLocker(rc)
+	urlCache := cache.NewURLCache(10000, 5*time.Second)
+	stripeBucket := cache.NewTokenBucket(rc, "stripe:create_session", cfg.App.StripeRateLimit, float64(cfg.App.StripeRateLimit))
 
 	// Stripe — pick implementation by mode (live = SDK, fake = in-process).
 	var stripeClient stripe.Client
@@ -93,22 +95,26 @@ func run() error {
 	default:
 		stripeClient = stripe.NewClient(cfg.Stripe.SecretKey, cfg.Stripe.WebhookSecret, cfg.Stripe.APIVersion)
 	}
+	// Wrap with circuit breaker so a bad Stripe day doesn't drag the gateway down.
+	stripeClient = stripe.NewBreakerClient(stripeClient, "stripe")
 
 	// Service + handlers.
 	paySvc := service.NewPaymentService(idem, stripeClient, publisher, pendingOrders, service.PaymentServiceOptions{
-		DefaultCurrency: cfg.Stripe.DefaultCurrency,
-		CryptoContract:  cfg.Blockchain.ContractAddress,
-		CryptoChainID:   cfg.Blockchain.ChainID,
-		LazyCheckout:    cfg.App.LazyCheckout,
-		PublicBaseURL:   cfg.App.PublicBaseURL,
+		DefaultCurrency:  cfg.Stripe.DefaultCurrency,
+		CryptoContract:   cfg.Blockchain.ContractAddress,
+		CryptoChainID:    cfg.Blockchain.ChainID,
+		LazyCheckout:     cfg.App.LazyCheckout,
+		PublicBaseURL:    cfg.App.PublicBaseURL,
+		CheckoutSecret:   cfg.App.CheckoutTokenSecret,
+		CheckoutTokenTTL: cfg.App.CheckoutTokenTTL,
 	})
 	webhookSvc := service.NewWebhookService(stripeClient, orderRepo, publisher, rc, cfg.Stripe.WebhookSecret)
-	checkoutResolver := service.NewCheckoutResolver(stripeClient, orderRepo, pendingOrders, locker)
+	checkoutResolver := service.NewCheckoutResolver(stripeClient, orderRepo, pendingOrders, locker, urlCache, stripeBucket)
 	payH := handler.NewPaymentHandler(paySvc)
 	payStatusH := handler.NewPaymentStatusHandler(orderRepo)
 	refundH := handler.NewRefundHandler(webhookSvc)
 	webhookH := handler.NewWebhookHandler(webhookSvc)
-	checkoutH := handler.NewCheckoutHandler(checkoutResolver)
+	checkoutH := handler.NewCheckoutHandler(checkoutResolver, cfg.App.CheckoutTokenSecret)
 
 	healthH := handler.NewHealthHandler(
 		&repository.MySQLPinger{DB: db},

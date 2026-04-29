@@ -29,6 +29,14 @@ type AppConfig struct {
 	// returns a self-hosted checkout_url. The actual Stripe Session is created
 	// on-demand the first time the URL is opened.
 	LazyCheckout bool
+	// CheckoutTokenSecret signs /pay/:id?t=<token> URLs to prevent enumeration.
+	// When empty, /pay/:id is unauthenticated (dev-only).
+	CheckoutTokenSecret string
+	// CheckoutTokenTTL bounds how long a hosted-checkout URL stays valid.
+	CheckoutTokenTTL time.Duration
+	// StripeRateLimit caps Stripe SDK calls fleet-wide via a Redis token
+	// bucket. Keep below your Stripe account quota with a safety margin.
+	StripeRateLimit int
 }
 
 type DBConfig struct {
@@ -82,11 +90,14 @@ type SecurityConfig struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		App: AppConfig{
-			Env:           getenv("APP_ENV", "development"),
-			Port:          getenvInt("APP_PORT", 8080),
-			LogLevel:      getenv("LOG_LEVEL", "info"),
-			PublicBaseURL: strings.TrimRight(getenv("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
-			LazyCheckout:  getenvBool("LAZY_CHECKOUT", false),
+			Env:                 getenv("APP_ENV", "development"),
+			Port:                getenvInt("APP_PORT", 8080),
+			LogLevel:            getenv("LOG_LEVEL", "info"),
+			PublicBaseURL:       strings.TrimRight(getenv("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
+			LazyCheckout:        getenvBool("LAZY_CHECKOUT", false),
+			CheckoutTokenSecret: getenv("CHECKOUT_TOKEN_SECRET", ""),
+			CheckoutTokenTTL:    time.Duration(getenvInt("CHECKOUT_TOKEN_TTL_SECONDS", 86400)) * time.Second,
+			StripeRateLimit:     getenvInt("STRIPE_RATE_LIMIT", 80),
 		},
 		DB: DBConfig{
 			DSN:          mustGetenv("DB_DSN"),
