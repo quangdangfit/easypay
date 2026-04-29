@@ -243,6 +243,45 @@ func TestResolve_BreakerOpenReturnsUnavailable(t *testing.T) {
 	}
 }
 
+func TestResolveAfterLock_ReturnsURLWhenPresent(t *testing.T) {
+	repo := &fakeOrderRepo{byID: map[string]*domain.Order{
+		"ORD-1": {OrderID: "ORD-1", CheckoutURL: "https://stripe/x", StripeSessionID: "cs_x"},
+	}}
+	r := NewCheckoutResolver(CheckoutResolverOptions{
+		Repo:     repo,
+		URLCache: cache.NewURLCache(8, time.Second),
+	}).(*checkoutResolver)
+	url, err := r.resolveAfterLock(context.Background(), "ORD-1")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if url != "https://stripe/x" {
+		t.Fatalf("url=%q", url)
+	}
+}
+
+func TestResolveAfterLock_NotReadyWhenMissing(t *testing.T) {
+	r := NewCheckoutResolver(CheckoutResolverOptions{
+		Repo:     &fakeOrderRepo{},
+		URLCache: cache.NewURLCache(8, time.Second),
+	}).(*checkoutResolver)
+	_, err := r.resolveAfterLock(context.Background(), "ORD-NONE")
+	if !errors.Is(err, ErrOrderNotReady) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestResolveAfterLock_NotReadyWhenURLMissing(t *testing.T) {
+	repo := &fakeOrderRepo{byID: map[string]*domain.Order{
+		"ORD-1": {OrderID: "ORD-1", StripeSessionID: "cs_x"}, // no CheckoutURL
+	}}
+	r := NewCheckoutResolver(CheckoutResolverOptions{Repo: repo}).(*checkoutResolver)
+	_, err := r.resolveAfterLock(context.Background(), "ORD-1")
+	if !errors.Is(err, ErrOrderNotReady) {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestResolve_LocalLRUSecondHit(t *testing.T) {
 	repo := &fakeOrderRepo{}
 	repo.byID = map[string]*domain.Order{
