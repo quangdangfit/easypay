@@ -51,7 +51,7 @@ func SetupEnv(t *testing.T) *TestEnv {
 	}
 	env.mysqlC = mysqlC
 
-	dsn, err := mysqlC.ConnectionString(ctx, "parseTime=true&multiStatements=true")
+	dsn, err := mysqlC.ConnectionString(ctx, "parseTime=true&multiStatements=true&clientFoundRows=true")
 	if err != nil {
 		t.Fatalf("mysql conn: %v", err)
 	}

@@ -53,6 +53,12 @@ type publisher struct {
 }
 
 func NewPublisher(cfg config.KafkaConfig) EventPublisher {
+	// Best-effort eager topic creation. Some Kafka distributions (e.g. the
+	// `confluent-local` image used in CI) ship with `auto.create.topics.enable`
+	// disabled, so writing to a non-existent topic returns
+	// "Unknown Topic Or Partition" before the writer's auto-create kicks in.
+	ensureTopics(cfg.Brokers, cfg.TopicEvents, cfg.TopicConfirmed, cfg.TopicDLQ)
+
 	common := func(topic string) *kafka.Writer {
 		return &kafka.Writer{
 			Addr:                   kafka.TCP(cfg.Brokers...),
@@ -70,6 +76,45 @@ func NewPublisher(cfg config.KafkaConfig) EventPublisher {
 		confirmed: common(cfg.TopicConfirmed),
 		dlq:       common(cfg.TopicDLQ),
 	}
+}
+
+// ensureTopics dials the controller and idempotently creates the given
+// topics if they don't already exist. Errors are logged but never fatal:
+// if the broker has auto-create enabled or the topic already exists, the
+// subsequent Writer call will succeed regardless.
+func ensureTopics(brokers []string, topics ...string) {
+	if len(brokers) == 0 {
+		return
+	}
+	d := &kafka.Dialer{Timeout: 5 * time.Second}
+	conn, err := d.DialContext(context.Background(), "tcp", brokers[0])
+	if err != nil {
+		return
+	}
+	defer func() { _ = conn.Close() }()
+
+	controller, err := conn.Controller()
+	if err != nil {
+		return
+	}
+	ctrlConn, err := d.DialContext(context.Background(), "tcp", fmt.Sprintf("%s:%d", controller.Host, controller.Port))
+	if err != nil {
+		return
+	}
+	defer func() { _ = ctrlConn.Close() }()
+
+	specs := make([]kafka.TopicConfig, 0, len(topics))
+	for _, t := range topics {
+		if t == "" {
+			continue
+		}
+		specs = append(specs, kafka.TopicConfig{
+			Topic:             t,
+			NumPartitions:     1,
+			ReplicationFactor: 1,
+		})
+	}
+	_ = ctrlConn.CreateTopics(specs...)
 }
 
 func (p *publisher) PublishPaymentEvent(ctx context.Context, e PaymentEvent) error {
