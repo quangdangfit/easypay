@@ -30,7 +30,7 @@ A checklist for building the global payment gateway monolith (Stripe + blockchai
 - [x] `internal/api/handler/health.go` — `GET /healthz` (liveness), `GET /readyz` (DB+Redis+Kafka ping)
 - [x] `internal/api/router.go` — Fiber app, register middleware + health routes
 - [x] `cmd/server/main.go` — wire config → deps → router; signal-based graceful shutdown (SIGTERM, drain in-flight)
-- [x] `docker-compose.yml` — MySQL 8, Redis 7, Kafka + Zookeeper (with healthchecks)
+- [x] `docker-compose.yml` — MySQL 8, Redis 7, Kafka in KRaft mode (no Zookeeper, with healthchecks)
 - [x] `migrations/001_create_orders.sql` — per CLAUDE.md schema (Stripe ID columns + `idx_stripe_pi` index)
 - [x] `migrations/002_create_pending_txs.sql`
 - [x] `migrations/003_create_merchants.sql`

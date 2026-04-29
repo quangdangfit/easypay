@@ -110,7 +110,7 @@ payment-gateway/
 │   ├── webhook_test.go          # Webhook handling tests
 │   ├── blockchain_test.go       # Chain listener tests
 │   └── external_mock_test.go    # Stripe mock HTTP server tests
-├── docker-compose.yml           # Local dev: MySQL + Redis + Kafka + Zookeeper
+├── docker-compose.yml           # Local dev: MySQL + Redis + Kafka (KRaft, no Zookeeper)
 ├── Dockerfile
 ├── Makefile
 └── go.mod
@@ -434,7 +434,7 @@ GET    /metrics                   # Prometheus metrics
 
 ```bash
 # Start dependencies
-docker-compose up -d   # MySQL, Redis, Kafka, Zookeeper
+docker-compose up -d   # MySQL, Redis, Kafka (KRaft mode)
 
 # Run migrations
 make migrate
