@@ -148,6 +148,66 @@ func TestCreate_CryptoPath(t *testing.T) {
 	}
 }
 
+func TestCreate_LazyCheckoutDoesNotHitStripe(t *testing.T) {
+	idem := &fakeIdem{}
+	stripeC := &fakeStripe{}
+	pub := &fakePublisher{}
+	pending := &fakePending{}
+	svc := NewPaymentService(idem, stripeC, pub, pending, PaymentServiceOptions{
+		DefaultCurrency: "USD",
+		LazyCheckout:    true,
+		PublicBaseURL:   "https://pay.example",
+		CheckoutSecret:  "sec",
+	})
+	merchant := &domain.Merchant{MerchantID: "M1"}
+	res, err := svc.Create(context.Background(), CreatePaymentInput{
+		Merchant: merchant, TransactionID: "TXN-LAZY", Amount: 1500, Currency: "USD",
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if stripeC.calls != 0 {
+		t.Fatalf("expected 0 stripe calls, got %d", stripeC.calls)
+	}
+	if !contains(res.CheckoutURL, "https://pay.example/pay/") {
+		t.Fatalf("checkout url: %q", res.CheckoutURL)
+	}
+	if !contains(res.CheckoutURL, "?t=") {
+		t.Fatalf("expected token in url: %q", res.CheckoutURL)
+	}
+	if pending.store == nil || pending.store[res.OrderID] == nil {
+		t.Fatal("expected pending order snapshot")
+	}
+}
+
+func TestCreate_LazyWithoutSecretSkipsToken(t *testing.T) {
+	svc := NewPaymentService(&fakeIdem{}, &fakeStripe{}, &fakePublisher{}, &fakePending{}, PaymentServiceOptions{
+		LazyCheckout:  true,
+		PublicBaseURL: "https://pay.example",
+	})
+	res, err := svc.Create(context.Background(), CreatePaymentInput{
+		Merchant: &domain.Merchant{MerchantID: "M1"}, TransactionID: "TXN-1", Amount: 1, Currency: "USD",
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if contains(res.CheckoutURL, "?t=") {
+		t.Fatalf("expected no token, got %q", res.CheckoutURL)
+	}
+}
+
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (indexOf(s, sub) >= 0)
+}
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestCreate_RejectsInvalid(t *testing.T) {
 	svc, _, _, _ := newSvc()
 	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
