@@ -12,12 +12,15 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/ethereum/go-ethereum/common"
+
 	"github.com/quangdangfit/easypay/internal/api"
 	"github.com/quangdangfit/easypay/internal/api/handler"
 	"github.com/quangdangfit/easypay/internal/cache"
 	"github.com/quangdangfit/easypay/internal/config"
 	"github.com/quangdangfit/easypay/internal/consumer"
 	"github.com/quangdangfit/easypay/internal/kafka"
+	"github.com/quangdangfit/easypay/internal/provider/blockchain"
 	"github.com/quangdangfit/easypay/internal/provider/stripe"
 	"github.com/quangdangfit/easypay/internal/repository"
 	"github.com/quangdangfit/easypay/internal/service"
@@ -129,6 +132,27 @@ func run() error {
 			log.Error("settlement consumer exited", "err", err)
 		}
 	}()
+
+	// Blockchain listener (Phase 5). Only spin up if a contract address is configured.
+	if cfg.Blockchain.ContractAddress != "" && cfg.Blockchain.RPCWebsocket != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		chainClient, err := blockchain.NewClient(ctx, cfg.Blockchain.RPCWebsocket, cfg.Blockchain.RPCHTTP)
+		cancel()
+		if err != nil {
+			log.Warn("blockchain client unavailable, listener disabled", "err", err)
+		} else {
+			pendingTxRepo := repository.NewPendingTxRepository(db)
+			cursor := blockchain.NewMySQLCursor(db)
+			chainCfg := blockchain.ChainConfig{
+				ChainID:               cfg.Blockchain.ChainID,
+				ContractAddress:       common.HexToAddress(cfg.Blockchain.ContractAddress),
+				RequiredConfirmations: cfg.Blockchain.RequiredConfirmations,
+				StartBlock:            cfg.Blockchain.StartBlock,
+			}
+			listener := blockchain.NewListener(chainClient, chainCfg, cursor, pendingTxRepo, orderRepo, publisher)
+			go listener.Run(consumerCtx)
+		}
+	}
 
 	addr := fmt.Sprintf(":%d", cfg.App.Port)
 	errCh := make(chan error, 1)
