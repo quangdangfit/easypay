@@ -1,0 +1,60 @@
+name: Dependabot auto-merge
+
+# Auto-merges Dependabot PRs that are low risk:
+#   - any GitHub Actions update
+#   - any patch-level Go module update
+#   - any indirect Go module update
+#
+# Higher-risk bumps (minor or major direct dependencies) require a human
+# review and are left untouched.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Decide auto-merge
+        id: gate
+        run: |
+          ecosystem='${{ steps.meta.outputs.package-ecosystem }}'
+          update='${{ steps.meta.outputs.update-type }}'
+          dep_type='${{ steps.meta.outputs.dependency-type }}'
+          echo "ecosystem=$ecosystem  update=$update  dep_type=$dep_type"
+
+          ok=false
+          if [ "$ecosystem" = "github_actions" ]; then ok=true; fi
+          if [ "$ecosystem" = "go_modules" ] && [ "$update" = "version-update:semver-patch" ]; then ok=true; fi
+          if [ "$ecosystem" = "go_modules" ] && [ "$dep_type" = "indirect" ]; then ok=true; fi
+
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+
+      - name: Approve & enable auto-merge
+        if: steps.gate.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh pr review --approve "$PR_URL"
+          gh pr merge --auto --squash "$PR_URL"
+
+      - name: Comment on risky PRs
+        if: steps.gate.outputs.ok != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh pr comment "$PR_URL" --body \
+            "Skipping auto-merge: ${{ steps.meta.outputs.update-type }} ${{ steps.meta.outputs.dependency-type }} bump on ${{ steps.meta.outputs.dependency-names }}. Needs human review."
