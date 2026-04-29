@@ -25,3 +25,4 @@
 - Concrete implementations are unexported. See `.claude/rules/dependency-injection.md` for the full DI contract.
 - Table-driven tests preferred for multiple cases.
 - Integration tests in `integration_test/` directory, use testcontainers.
+- Lint and unit tests must pass before every commit. See `.claude/rules/pre-commit-checks.md`.
