@@ -12,10 +12,10 @@ import (
 const stripeSignatureHeader = "Stripe-Signature"
 
 type WebhookHandler struct {
-	svc *service.WebhookService
+	svc service.Webhooks
 }
 
-func NewWebhookHandler(svc *service.WebhookService) *WebhookHandler {
+func NewWebhookHandler(svc service.Webhooks) *WebhookHandler {
 	return &WebhookHandler{svc: svc}
 }
 

@@ -12,13 +12,13 @@ import (
 )
 
 type CheckoutHandler struct {
-	resolver    *service.CheckoutResolver
+	resolver    service.Checkouts
 	tokenSecret string
 }
 
 // NewCheckoutHandler. tokenSecret should be a stable secret shared across
 // pods; if empty, /pay/:id accepts any order_id (dev only).
-func NewCheckoutHandler(r *service.CheckoutResolver, tokenSecret string) *CheckoutHandler {
+func NewCheckoutHandler(r service.Checkouts, tokenSecret string) *CheckoutHandler {
 	return &CheckoutHandler{resolver: r, tokenSecret: tokenSecret}
 }
 

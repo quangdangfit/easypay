@@ -22,5 +22,6 @@
 ## Project Conventions
 - All external dependencies accessed through interfaces. No direct `*sql.DB` in service layer.
 - Constructor functions return interfaces: `func NewOrderRepository(db *sql.DB) OrderRepository`.
+- Concrete implementations are unexported. See `.claude/rules/dependency-injection.md` for the full DI contract.
 - Table-driven tests preferred for multiple cases.
 - Integration tests in `integration_test/` directory, use testcontainers.

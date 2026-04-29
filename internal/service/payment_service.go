@@ -57,7 +57,8 @@ type CryptoPayload struct {
 	ChainID         int64  `json:"chain_id"`
 }
 
-type PaymentService struct {
+// paymentService implements Payments.
+type paymentService struct {
 	idem      cache.IdempotencyChecker
 	stripe    stripe.Client
 	publisher kafka.EventPublisher
@@ -95,12 +96,12 @@ func NewPaymentService(
 	publisher kafka.EventPublisher,
 	pending cache.PendingOrderStore,
 	opts PaymentServiceOptions,
-) *PaymentService {
+) Payments {
 	ttl := opts.CheckoutTokenTTL
 	if ttl == 0 {
 		ttl = 24 * time.Hour
 	}
-	return &PaymentService{
+	return &paymentService{
 		idem:              idem,
 		stripe:            stripeC,
 		publisher:         publisher,
@@ -117,7 +118,7 @@ func NewPaymentService(
 	}
 }
 
-func (s *PaymentService) Create(ctx context.Context, in CreatePaymentInput) (*CreatePaymentResult, error) {
+func (s *paymentService) Create(ctx context.Context, in CreatePaymentInput) (*CreatePaymentResult, error) {
 	if in.Merchant == nil {
 		return nil, fmt.Errorf("%w: merchant required", ErrInvalidRequest)
 	}

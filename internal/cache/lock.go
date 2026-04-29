@@ -12,24 +12,28 @@ import (
 
 var ErrLockNotAcquired = errors.New("lock not acquired")
 
-// Lock holds a distributed lock. Call Release to free it; Release uses a
-// CAS Lua script so we never delete a lock acquired by someone else.
-type Lock struct {
-	rc    *redis.Client
-	key   string
-	token string
+// Locker is the port consumed by services that need a distributed mutex.
+// Implementations include redisLocker (default) and may include in-process
+// fakes for tests.
+type Locker interface {
+	Acquire(ctx context.Context, key string, ttl time.Duration) (Lock, error)
 }
 
-type Locker struct {
+// Lock is the handle returned by Locker.Acquire. Release uses CAS so we
+// never delete a lock acquired by someone else.
+type Lock interface {
+	Release(ctx context.Context) error
+}
+
+type redisLocker struct {
 	rc *redis.Client
 }
 
-func NewLocker(rc *redis.Client) *Locker {
-	return &Locker{rc: rc}
+func NewLocker(rc *redis.Client) Locker {
+	return &redisLocker{rc: rc}
 }
 
-// Acquire returns a Lock or ErrLockNotAcquired if another holder owns it.
-func (l *Locker) Acquire(ctx context.Context, key string, ttl time.Duration) (*Lock, error) {
+func (l *redisLocker) Acquire(ctx context.Context, key string, ttl time.Duration) (Lock, error) {
 	token := uuid.NewString()
 	ok, err := l.rc.SetNX(ctx, "lock:"+key, token, ttl).Result()
 	if err != nil {
@@ -38,7 +42,13 @@ func (l *Locker) Acquire(ctx context.Context, key string, ttl time.Duration) (*L
 	if !ok {
 		return nil, ErrLockNotAcquired
 	}
-	return &Lock{rc: l.rc, key: "lock:" + key, token: token}, nil
+	return &redisLock{rc: l.rc, key: "lock:" + key, token: token}, nil
+}
+
+type redisLock struct {
+	rc    *redis.Client
+	key   string
+	token string
 }
 
 const releaseScript = `
@@ -48,7 +58,7 @@ end
 return 0
 `
 
-func (lk *Lock) Release(ctx context.Context) error {
+func (lk *redisLock) Release(ctx context.Context) error {
 	if lk == nil {
 		return nil
 	}

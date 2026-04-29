@@ -19,10 +19,8 @@ import (
 
 var ErrWebhookDuplicate = errors.New("duplicate webhook event")
 
-// WebhookService verifies, deduplicates, cross-checks against Stripe, and
-// applies a Stripe event to our orders. It then produces a payment.confirmed
-// kafka event for downstream merchant notification.
-type WebhookService struct {
+// webhookService implements Webhooks.
+type webhookService struct {
 	stripe        stripe.Client
 	repo          repository.OrderRepository
 	publisher     kafka.EventPublisher
@@ -30,8 +28,8 @@ type WebhookService struct {
 	webhookSecret string
 }
 
-func NewWebhookService(s stripe.Client, repo repository.OrderRepository, p kafka.EventPublisher, rc *redis.Client, webhookSecret string) *WebhookService {
-	return &WebhookService{
+func NewWebhookService(s stripe.Client, repo repository.OrderRepository, p kafka.EventPublisher, rc *redis.Client, webhookSecret string) Webhooks {
+	return &webhookService{
 		stripe:        s,
 		repo:          repo,
 		publisher:     p,
@@ -43,7 +41,7 @@ func NewWebhookService(s stripe.Client, repo repository.OrderRepository, p kafka
 // Process verifies the signature, dedupes by event.id, cross-checks with Stripe
 // for the *.succeeded family, then transitions order state and produces the
 // confirmation event.
-func (s *WebhookService) Process(ctx context.Context, payload []byte, sigHeader string) error {
+func (s *webhookService) Process(ctx context.Context, payload []byte, sigHeader string) error {
 	event, err := s.stripe.VerifyWebhookSignature(payload, sigHeader, s.webhookSecret)
 	if err != nil {
 		return fmt.Errorf("verify signature: %w", err)
@@ -101,7 +99,7 @@ func decodeStripeObject(b []byte) (*stripeObject, error) {
 	return &o, nil
 }
 
-func (s *WebhookService) handleSucceeded(ctx context.Context, e *stripe.Event) error {
+func (s *webhookService) handleSucceeded(ctx context.Context, e *stripe.Event) error {
 	o, err := decodeStripeObject(e.Data)
 	if err != nil {
 		return err
@@ -147,7 +145,7 @@ func (s *WebhookService) handleSucceeded(ctx context.Context, e *stripe.Event) e
 	return s.publisher.PublishPaymentConfirmed(ctx, confirmed)
 }
 
-func (s *WebhookService) handleFailed(ctx context.Context, e *stripe.Event) error {
+func (s *webhookService) handleFailed(ctx context.Context, e *stripe.Event) error {
 	o, err := decodeStripeObject(e.Data)
 	if err != nil {
 		return err
@@ -166,7 +164,7 @@ func (s *WebhookService) handleFailed(ctx context.Context, e *stripe.Event) erro
 	return nil
 }
 
-func (s *WebhookService) handleRefunded(ctx context.Context, e *stripe.Event) error {
+func (s *webhookService) handleRefunded(ctx context.Context, e *stripe.Event) error {
 	o, err := decodeStripeObject(e.Data)
 	if err != nil {
 		return err
@@ -227,7 +225,7 @@ type RefundResult struct {
 	Currency string `json:"currency"`
 }
 
-func (s *WebhookService) CreateRefund(ctx context.Context, in RefundInput) (*RefundResult, error) {
+func (s *webhookService) CreateRefund(ctx context.Context, in RefundInput) (*RefundResult, error) {
 	if in.Merchant == nil || in.OrderID == "" {
 		return nil, fmt.Errorf("merchant + order_id required")
 	}

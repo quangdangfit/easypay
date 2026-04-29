@@ -5,13 +5,18 @@ import (
 	"time"
 )
 
-// URLCache is a tiny in-process TTL cache for resolved Stripe checkout URLs,
-// keyed by order_id. Hot orders (page reload, retry, double-click) skip
-// Redis/DB entirely.
-//
-// Sized for ~10k hot orders per pod with a default 5s TTL. Eviction on TTL
-// expiry is lazy (on Get) plus periodic via Sweep().
-type URLCache struct {
+// URLCache is the port consumed by the checkout resolver to short-circuit
+// hot reloads / retries on the same order_id.
+type URLCache interface {
+	Get(orderID string) (string, bool)
+	Put(orderID, url string)
+	Invalidate(orderID string)
+}
+
+// urlCache is an in-process TTL cache. Sized for ~10k hot orders per pod
+// with a default 5s TTL. Eviction on TTL expiry is lazy (on Get) plus
+// opportunistic on Put.
+type urlCache struct {
 	mu      sync.RWMutex
 	data    map[string]urlEntry
 	maxSize int
@@ -23,11 +28,11 @@ type urlEntry struct {
 	expiresAt time.Time
 }
 
-func NewURLCache(maxSize int, ttl time.Duration) *URLCache {
-	return &URLCache{data: make(map[string]urlEntry, maxSize), maxSize: maxSize, ttl: ttl}
+func NewURLCache(maxSize int, ttl time.Duration) URLCache {
+	return &urlCache{data: make(map[string]urlEntry, maxSize), maxSize: maxSize, ttl: ttl}
 }
 
-func (c *URLCache) Get(orderID string) (string, bool) {
+func (c *urlCache) Get(orderID string) (string, bool) {
 	c.mu.RLock()
 	e, ok := c.data[orderID]
 	c.mu.RUnlock()
@@ -37,7 +42,7 @@ func (c *URLCache) Get(orderID string) (string, bool) {
 	return e.url, true
 }
 
-func (c *URLCache) Put(orderID, url string) {
+func (c *urlCache) Put(orderID, url string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.data) >= c.maxSize {
@@ -59,7 +64,7 @@ func (c *URLCache) Put(orderID, url string) {
 	c.data[orderID] = urlEntry{url: url, expiresAt: time.Now().Add(c.ttl)}
 }
 
-func (c *URLCache) Invalidate(orderID string) {
+func (c *urlCache) Invalidate(orderID string) {
 	c.mu.Lock()
 	delete(c.data, orderID)
 	c.mu.Unlock()

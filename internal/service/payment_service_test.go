@@ -74,7 +74,7 @@ func (f *fakePublisher) PublishPaymentConfirmed(ctx context.Context, e kafka.Pay
 }
 func (f *fakePublisher) Close() error { return nil }
 
-func newSvc() (*PaymentService, *fakeStripe, *fakePublisher, *fakeIdem) {
+func newSvc() (Payments, *fakeStripe, *fakePublisher, *fakeIdem) {
 	idem := &fakeIdem{}
 	stripeC := &fakeStripe{}
 	pub := &fakePublisher{}

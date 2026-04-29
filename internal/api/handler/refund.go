@@ -11,10 +11,10 @@ import (
 )
 
 type RefundHandler struct {
-	svc *service.WebhookService
+	svc service.Webhooks
 }
 
-func NewRefundHandler(svc *service.WebhookService) *RefundHandler {
+func NewRefundHandler(svc service.Webhooks) *RefundHandler {
 	return &RefundHandler{svc: svc}
 }
 

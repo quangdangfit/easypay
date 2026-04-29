@@ -9,13 +9,15 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// TokenBucket is a distributed rate limiter shared across pods via Redis.
-// A constant rate of `refill` tokens/second is added up to `capacity`.
-// Allow() either reserves one token and returns nil, or returns
-// ErrRateLimited and the time the caller should wait before retrying.
-//
-// Backed by a Lua script for atomicity. Tested against go-redis v9.
-type TokenBucket struct {
+// TokenBucket is a distributed rate limiter port. Allow() either reserves
+// one token and returns nil, or returns ErrRateLimited.
+type TokenBucket interface {
+	Allow(ctx context.Context) error
+}
+
+// redisTokenBucket is the Redis-backed implementation. A constant rate of
+// `refill` tokens/second is added up to `capacity`. Atomic via Lua script.
+type redisTokenBucket struct {
 	rc       *redis.Client
 	key      string
 	capacity int
@@ -24,8 +26,8 @@ type TokenBucket struct {
 
 var ErrRateLimited = errors.New("rate limited")
 
-func NewTokenBucket(rc *redis.Client, key string, capacity int, ratePerSec float64) *TokenBucket {
-	return &TokenBucket{rc: rc, key: "tb:" + key, capacity: capacity, refill: ratePerSec}
+func NewTokenBucket(rc *redis.Client, key string, capacity int, ratePerSec float64) TokenBucket {
+	return &redisTokenBucket{rc: rc, key: "tb:" + key, capacity: capacity, refill: ratePerSec}
 }
 
 const tbScript = `
@@ -57,7 +59,7 @@ redis.call('PEXPIRE', key, math.ceil(capacity / refill * 1000) + 5000)
 return { allowed, wait_ms }
 `
 
-func (b *TokenBucket) Allow(ctx context.Context) error {
+func (b *redisTokenBucket) Allow(ctx context.Context) error {
 	res, err := b.rc.Eval(ctx, tbScript,
 		[]string{b.key},
 		b.capacity, b.refill, time.Now().UnixMilli(),

@@ -28,13 +28,14 @@ import (
 //     fleet, e.g. 80 rps under Stripe's 100 rps default.
 //  6. Circuit breaker (gobreaker) — if Stripe is degraded, fail fast with
 //     ErrCircuitOpen so the user sees a polished "try again" page.
-type CheckoutResolver struct {
+// checkoutResolver implements Checkouts.
+type checkoutResolver struct {
 	stripe            stripe.Client
 	repo              repository.OrderRepository
 	pending           cache.PendingOrderStore
-	locker            *cache.Locker
-	urlCache          *cache.URLCache
-	bucket            *cache.TokenBucket
+	locker            cache.Locker
+	urlCache          cache.URLCache
+	bucket            cache.TokenBucket
 	defaultSuccessURL string
 	defaultCancelURL  string
 }
@@ -43,15 +44,15 @@ type CheckoutResolverOptions struct {
 	Stripe            stripe.Client
 	Repo              repository.OrderRepository
 	Pending           cache.PendingOrderStore
-	Locker            *cache.Locker
-	URLCache          *cache.URLCache
-	Bucket            *cache.TokenBucket
+	Locker            cache.Locker
+	URLCache          cache.URLCache
+	Bucket            cache.TokenBucket
 	DefaultSuccessURL string
 	DefaultCancelURL  string
 }
 
-func NewCheckoutResolver(opts CheckoutResolverOptions) *CheckoutResolver {
-	return &CheckoutResolver{
+func NewCheckoutResolver(opts CheckoutResolverOptions) Checkouts {
+	return &checkoutResolver{
 		stripe:            opts.Stripe,
 		repo:              opts.Repo,
 		pending:           opts.Pending,
@@ -70,7 +71,7 @@ var (
 
 // Resolve returns the Stripe Checkout URL for an order. Multi-tier with
 // metrics and graceful degradation; see struct doc.
-func (r *CheckoutResolver) Resolve(ctx context.Context, orderID string) (string, error) {
+func (r *checkoutResolver) Resolve(ctx context.Context, orderID string) (string, error) {
 	// Tier 1: in-process LRU.
 	if r.urlCache != nil {
 		if url, ok := r.urlCache.Get(orderID); ok {
@@ -169,13 +170,13 @@ func (r *CheckoutResolver) Resolve(ctx context.Context, orderID string) (string,
 	return session.URL, nil
 }
 
-func (r *CheckoutResolver) cacheURL(orderID, url string) {
+func (r *checkoutResolver) cacheURL(orderID, url string) {
 	if r.urlCache != nil {
 		r.urlCache.Put(orderID, url)
 	}
 }
 
-func (r *CheckoutResolver) resolveAfterLock(ctx context.Context, orderID string) (string, error) {
+func (r *checkoutResolver) resolveAfterLock(ctx context.Context, orderID string) (string, error) {
 	order, err := r.repo.GetByOrderID(ctx, orderID)
 	if err == nil && order != nil && order.CheckoutURL != "" && order.StripeSessionID != "" {
 		r.cacheURL(orderID, order.CheckoutURL)
@@ -184,7 +185,7 @@ func (r *CheckoutResolver) resolveAfterLock(ctx context.Context, orderID string)
 	return "", ErrOrderNotReady
 }
 
-func (r *CheckoutResolver) createSession(ctx context.Context, order *domain.Order, snap *cache.PendingOrder) (*stripe.CheckoutSession, error) {
+func (r *checkoutResolver) createSession(ctx context.Context, order *domain.Order, snap *cache.PendingOrder) (*stripe.CheckoutSession, error) {
 	var req stripe.CreateCheckoutRequest
 	switch {
 	case order != nil:

@@ -17,18 +17,19 @@ import (
 // Stripe for ground truth, and force-confirms or fails them. This catches
 // dropped webhooks (Stripe should have delivered, but didn't) and partial
 // outages.
-type OrderReconciliation struct {
+// orderReconciliation implements Reconciler.
+type orderReconciliation struct {
 	Orders    repository.OrderRepository
 	Stripe    stripe.Client
 	Publisher kafka.EventPublisher
 
-	Interval     time.Duration
-	StuckAfter   time.Duration
-	BatchSize    int
+	Interval   time.Duration
+	StuckAfter time.Duration
+	BatchSize  int
 }
 
-func NewOrderReconciliation(orders repository.OrderRepository, s stripe.Client, p kafka.EventPublisher) *OrderReconciliation {
-	return &OrderReconciliation{
+func NewOrderReconciliation(orders repository.OrderRepository, s stripe.Client, p kafka.EventPublisher) Reconciler {
+	return &orderReconciliation{
 		Orders: orders, Stripe: s, Publisher: p,
 		Interval:   5 * time.Minute,
 		StuckAfter: 10 * time.Minute,
@@ -36,7 +37,7 @@ func NewOrderReconciliation(orders repository.OrderRepository, s stripe.Client, 
 	}
 }
 
-func (r *OrderReconciliation) Run(ctx context.Context) error {
+func (r *orderReconciliation) Run(ctx context.Context) error {
 	log := logger.L().With("component", "order_reconciler")
 	tk := time.NewTicker(r.Interval)
 	defer tk.Stop()
@@ -52,7 +53,7 @@ func (r *OrderReconciliation) Run(ctx context.Context) error {
 	}
 }
 
-func (r *OrderReconciliation) tick(ctx context.Context) error {
+func (r *orderReconciliation) tick(ctx context.Context) error {
 	cutoff := time.Now().UTC().Add(-r.StuckAfter)
 	stuck, err := r.Orders.GetPendingBefore(ctx, cutoff, r.BatchSize)
 	if err != nil {
@@ -64,7 +65,7 @@ func (r *OrderReconciliation) tick(ctx context.Context) error {
 	return nil
 }
 
-func (r *OrderReconciliation) reconcileOne(ctx context.Context, o *domain.Order) {
+func (r *orderReconciliation) reconcileOne(ctx context.Context, o *domain.Order) {
 	log := logger.L().With("order_id", o.OrderID, "merchant_id", o.MerchantID)
 	if o.StripePaymentIntentID == "" {
 		// Crypto orders are reconciled by the blockchain Reconciler; nothing
