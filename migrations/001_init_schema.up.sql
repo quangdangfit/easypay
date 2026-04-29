@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS pending_txs (
     order_id         VARCHAR(64) NOT NULL,
     payer            VARCHAR(42),
     token            VARCHAR(42),
-    amount           DECIMAL(78,0),
+    amount           DECIMAL(65,0),
     chain_id         BIGINT NOT NULL,
     confirmations    BIGINT DEFAULT 0,
     required_confirm BIGINT NOT NULL,
