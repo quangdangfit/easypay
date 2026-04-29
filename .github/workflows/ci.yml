@@ -76,14 +76,11 @@ jobs:
     name: Integration tests
     runs-on: ubuntu-latest
     # Integration tests bring up MySQL + Redis + Kafka in real containers via
-    # testcontainers-go inside the test process. Skipped on PRs from forks
-    # because they can't access secrets and Docker-in-Docker is heavier.
+    # testcontainers-go inside the test process. The GitHub-hosted runner
+    # already exposes a working Docker daemon, so no `services:` block is
+    # needed. Skipped on PRs from forks (no secrets, Docker-in-Docker is
+    # slower there).
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-
-    services:
-      # testcontainers-go manages its own containers; we just need Docker
-      # available, which the GitHub-hosted runner already provides.
-      _: ${{ '' }}
 
     steps:
       - uses: actions/checkout@v4
