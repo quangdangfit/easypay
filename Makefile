@@ -5,7 +5,7 @@ BIN_DIR  := bin
 PKG      := github.com/quangdangfit/easypay
 LDFLAGS  := -s -w
 
-.PHONY: help run build tidy lint test test-integration migrate up down logs clean
+.PHONY: help run build tidy lint test test-integration migrate up down logs clean bench
 
 help:
 	@echo "Targets:"
@@ -39,6 +39,9 @@ test-integration:
 
 migrate:
 	@./scripts/migrate.sh up
+
+bench:
+	go run ./cmd/bench --concurrency 50 --total 1000
 
 up:
 	docker compose up -d
