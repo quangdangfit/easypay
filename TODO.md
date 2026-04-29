@@ -20,22 +20,22 @@ A checklist for building the global payment gateway monolith (Stripe + blockchai
 
 ## Phase 1 — Foundation
 
-- [ ] `internal/config/config.go` — load all env vars into a typed `Config` struct; fail fast on missing required keys (incl. `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`)
-- [ ] `pkg/logger/logger.go` — `slog` setup with JSON handler; helper to inject `request_id`, `merchant_id`, `order_id`
-- [ ] `pkg/response/response.go` — JSON envelope helpers (`OK`, `Accepted`, `Error`)
-- [ ] `internal/domain/order.go` — `Order` struct + `OrderStatus` enum (`created/pending/paid/failed/expired/refunded`); fields for `stripe_session_id`, `stripe_payment_intent_id`, `stripe_charge_id`
-- [ ] `internal/domain/transaction.go` — `PendingTx` struct + status enum (`pending/confirmed/failed/reorged`)
-- [ ] `internal/domain/merchant.go` — `Merchant` struct + status enum (`active/suspended`)
-- [ ] `internal/api/middleware/requestid.go` — inject `X-Request-ID` (generate if missing)
-- [ ] `internal/api/handler/health.go` — `GET /healthz` (liveness), `GET /readyz` (DB+Redis+Kafka ping)
-- [ ] `internal/api/router.go` — Fiber app, register middleware + health routes
-- [ ] `cmd/server/main.go` — wire config → deps → router; signal-based graceful shutdown (SIGTERM, drain in-flight)
-- [ ] `docker-compose.yml` — MySQL 8, Redis 7, Kafka + Zookeeper (with healthchecks)
-- [ ] `migrations/001_create_orders.sql` — per CLAUDE.md schema (Stripe ID columns + `idx_stripe_pi` index)
-- [ ] `migrations/002_create_pending_txs.sql`
-- [ ] `migrations/003_create_merchants.sql`
-- [ ] `migrations/004_create_block_cursors.sql`
-- [ ] Migration runner (e.g. `golang-migrate` via `make migrate`)
+- [x] `internal/config/config.go` — load all env vars into a typed `Config` struct; fail fast on missing required keys (incl. `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`)
+- [x] `pkg/logger/logger.go` — `slog` setup with JSON handler; helper to inject `request_id`, `merchant_id`, `order_id`
+- [x] `pkg/response/response.go` — JSON envelope helpers (`OK`, `Accepted`, `Error`)
+- [x] `internal/domain/order.go` — `Order` struct + `OrderStatus` enum (`created/pending/paid/failed/expired/refunded`); fields for `stripe_session_id`, `stripe_payment_intent_id`, `stripe_charge_id`
+- [x] `internal/domain/transaction.go` — `PendingTx` struct + status enum (`pending/confirmed/failed/reorged`)
+- [x] `internal/domain/merchant.go` — `Merchant` struct + status enum (`active/suspended`)
+- [x] `internal/api/middleware/requestid.go` — inject `X-Request-ID` (generate if missing)
+- [x] `internal/api/handler/health.go` — `GET /healthz` (liveness), `GET /readyz` (DB+Redis+Kafka ping)
+- [x] `internal/api/router.go` — Fiber app, register middleware + health routes
+- [x] `cmd/server/main.go` — wire config → deps → router; signal-based graceful shutdown (SIGTERM, drain in-flight)
+- [x] `docker-compose.yml` — MySQL 8, Redis 7, Kafka + Zookeeper (with healthchecks)
+- [x] `migrations/001_create_orders.sql` — per CLAUDE.md schema (Stripe ID columns + `idx_stripe_pi` index)
+- [x] `migrations/002_create_pending_txs.sql`
+- [x] `migrations/003_create_merchants.sql`
+- [x] `migrations/004_create_block_cursors.sql`
+- [x] Migration runner (`golang-migrate` via `scripts/migrate.sh` / `make migrate`)
 - [ ] **Smoke test:** `make run` boots, `/healthz` returns 200, `/readyz` returns 200 against compose stack
 
 ---
