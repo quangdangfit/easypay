@@ -107,15 +107,18 @@ func (r *CheckoutResolver) Resolve(ctx context.Context, orderID string) (string,
 	}
 	defer lock.Release(ctx)
 
-	// Re-check after lock to avoid duplicate creation.
-	if order != nil {
-		if order.CheckoutURL != "" {
-			r.cacheURL(orderID, order.CheckoutURL)
-			return order.CheckoutURL, nil
+	// Re-check after lock — same condition as the initial cache hit.
+	// Both fields must be present, otherwise we may return a lazy URL that
+	// points back at /pay/:id and create a redirect loop.
+	if order != nil && order.CheckoutURL != "" && order.StripeSessionID != "" {
+		r.cacheURL(orderID, order.CheckoutURL)
+		return order.CheckoutURL, nil
+	}
+	if order == nil {
+		if cached, _ := r.repo.GetByOrderID(ctx, orderID); cached != nil && cached.CheckoutURL != "" && cached.StripeSessionID != "" {
+			r.cacheURL(orderID, cached.CheckoutURL)
+			return cached.CheckoutURL, nil
 		}
-	} else if cached, _ := r.repo.GetByOrderID(ctx, orderID); cached != nil && cached.CheckoutURL != "" {
-		r.cacheURL(orderID, cached.CheckoutURL)
-		return cached.CheckoutURL, nil
 	}
 
 	// Tier 5: rate limit Stripe calls across the fleet.
@@ -157,7 +160,7 @@ func (r *CheckoutResolver) cacheURL(orderID, url string) {
 
 func (r *CheckoutResolver) resolveAfterLock(ctx context.Context, orderID string) (string, error) {
 	order, err := r.repo.GetByOrderID(ctx, orderID)
-	if err == nil && order.CheckoutURL != "" {
+	if err == nil && order != nil && order.CheckoutURL != "" && order.StripeSessionID != "" {
 		r.cacheURL(orderID, order.CheckoutURL)
 		return order.CheckoutURL, nil
 	}

@@ -209,6 +209,16 @@ func (s *PaymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 	_ = s.idem.Set(ctx, idemKey, cached, 24*time.Hour)
 
 	// 5. Publish payment.events for the async consumer to batch-insert.
+	//
+	// `CheckoutURL` in the event/DB column is reserved for the Stripe-hosted
+	// URL. In lazy mode `result.CheckoutURL` is our own /pay/:id endpoint, so
+	// we must NOT persist it — otherwise the resolver's DB lookup would
+	// return the lazy URL on the next click and the redirect would loop back
+	// to itself.
+	persistedCheckoutURL := ""
+	if !s.lazyCheckout {
+		persistedCheckoutURL = result.CheckoutURL
+	}
 	event := kafka.PaymentEvent{
 		OrderID:               orderID,
 		MerchantID:            in.Merchant.MerchantID,
@@ -219,7 +229,7 @@ func (s *PaymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 		Status:                string(domain.OrderStatusPending),
 		StripeSessionID:       result.StripeSessionID,
 		StripePaymentIntentID: result.StripePaymentIntentID,
-		CheckoutURL:           result.CheckoutURL,
+		CheckoutURL:           persistedCheckoutURL,
 		CallbackURL:           in.CallbackURL,
 		CreatedAt:             time.Now().UTC().Unix(),
 	}
