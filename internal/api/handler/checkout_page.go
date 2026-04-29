@@ -52,6 +52,54 @@ const (
 </body>
 </html>`
 
+	checkoutSuccessHTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Payment successful</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;background:#fafafa;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#1a1a1a}
+  .card{background:#fff;border-radius:12px;padding:32px 40px;box-shadow:0 1px 3px rgba(0,0,0,0.08);text-align:center;max-width:420px}
+  .icon{font-size:48px;margin-bottom:8px}
+  h1{font-size:20px;font-weight:600;margin:0 0 8px;color:#0a8754}
+  p{font-size:14px;color:#666;margin:0;line-height:1.5}
+  .ref{margin-top:16px;font-size:11px;color:#aaa;font-family:monospace}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✅</div>
+    <h1>Payment successful</h1>
+    <p>Thanks — we've received your payment. The merchant will follow up shortly.</p>
+    <div class="ref">order: %s</div>
+  </div>
+</body>
+</html>`
+
+	checkoutCancelHTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Checkout cancelled</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;background:#fafafa;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#1a1a1a}
+  .card{background:#fff;border-radius:12px;padding:32px 40px;box-shadow:0 1px 3px rgba(0,0,0,0.08);text-align:center;max-width:420px}
+  .icon{font-size:48px;margin-bottom:8px}
+  h1{font-size:20px;font-weight:600;margin:0 0 8px}
+  p{font-size:14px;color:#666;margin:0;line-height:1.5}
+  .ref{margin-top:16px;font-size:11px;color:#aaa;font-family:monospace}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">↩️</div>
+    <h1>Checkout cancelled</h1>
+    <p>No charges were made. You can return to the merchant to retry.</p>
+    <div class="ref">order: %s</div>
+  </div>
+</body>
+</html>`
+
 	checkoutInvalidHTML = `<!doctype html>
 <html lang="en">
 <head>

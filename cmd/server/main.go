@@ -100,16 +100,27 @@ func run() error {
 
 	// Service + handlers.
 	paySvc := service.NewPaymentService(idem, stripeClient, publisher, pendingOrders, service.PaymentServiceOptions{
-		DefaultCurrency:  cfg.Stripe.DefaultCurrency,
-		CryptoContract:   cfg.Blockchain.ContractAddress,
-		CryptoChainID:    cfg.Blockchain.ChainID,
-		LazyCheckout:     cfg.App.LazyCheckout,
-		PublicBaseURL:    cfg.App.PublicBaseURL,
-		CheckoutSecret:   cfg.App.CheckoutTokenSecret,
-		CheckoutTokenTTL: cfg.App.CheckoutTokenTTL,
+		DefaultCurrency:   cfg.Stripe.DefaultCurrency,
+		CryptoContract:    cfg.Blockchain.ContractAddress,
+		CryptoChainID:     cfg.Blockchain.ChainID,
+		LazyCheckout:      cfg.App.LazyCheckout,
+		PublicBaseURL:     cfg.App.PublicBaseURL,
+		CheckoutSecret:    cfg.App.CheckoutTokenSecret,
+		CheckoutTokenTTL:  cfg.App.CheckoutTokenTTL,
+		DefaultSuccessURL: cfg.App.CheckoutDefaultSuccessURL,
+		DefaultCancelURL:  cfg.App.CheckoutDefaultCancelURL,
 	})
 	webhookSvc := service.NewWebhookService(stripeClient, orderRepo, publisher, rc, cfg.Stripe.WebhookSecret)
-	checkoutResolver := service.NewCheckoutResolver(stripeClient, orderRepo, pendingOrders, locker, urlCache, stripeBucket)
+	checkoutResolver := service.NewCheckoutResolver(service.CheckoutResolverOptions{
+		Stripe:            stripeClient,
+		Repo:              orderRepo,
+		Pending:           pendingOrders,
+		Locker:            locker,
+		URLCache:          urlCache,
+		Bucket:            stripeBucket,
+		DefaultSuccessURL: cfg.App.CheckoutDefaultSuccessURL,
+		DefaultCancelURL:  cfg.App.CheckoutDefaultCancelURL,
+	})
 	payH := handler.NewPaymentHandler(paySvc)
 	payStatusH := handler.NewPaymentStatusHandler(orderRepo)
 	refundH := handler.NewRefundHandler(webhookSvc)

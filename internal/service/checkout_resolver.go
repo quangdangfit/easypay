@@ -29,29 +29,37 @@ import (
 //  6. Circuit breaker (gobreaker) — if Stripe is degraded, fail fast with
 //     ErrCircuitOpen so the user sees a polished "try again" page.
 type CheckoutResolver struct {
-	stripe   stripe.Client
-	repo     repository.OrderRepository
-	pending  cache.PendingOrderStore
-	locker   *cache.Locker
-	urlCache *cache.URLCache
-	bucket   *cache.TokenBucket
+	stripe            stripe.Client
+	repo              repository.OrderRepository
+	pending           cache.PendingOrderStore
+	locker            *cache.Locker
+	urlCache          *cache.URLCache
+	bucket            *cache.TokenBucket
+	defaultSuccessURL string
+	defaultCancelURL  string
 }
 
-func NewCheckoutResolver(
-	s stripe.Client,
-	repo repository.OrderRepository,
-	pending cache.PendingOrderStore,
-	locker *cache.Locker,
-	urlCache *cache.URLCache,
-	bucket *cache.TokenBucket,
-) *CheckoutResolver {
+type CheckoutResolverOptions struct {
+	Stripe            stripe.Client
+	Repo              repository.OrderRepository
+	Pending           cache.PendingOrderStore
+	Locker            *cache.Locker
+	URLCache          *cache.URLCache
+	Bucket            *cache.TokenBucket
+	DefaultSuccessURL string
+	DefaultCancelURL  string
+}
+
+func NewCheckoutResolver(opts CheckoutResolverOptions) *CheckoutResolver {
 	return &CheckoutResolver{
-		stripe:   s,
-		repo:     repo,
-		pending:  pending,
-		locker:   locker,
-		urlCache: urlCache,
-		bucket:   bucket,
+		stripe:            opts.Stripe,
+		repo:              opts.Repo,
+		pending:           opts.Pending,
+		locker:            opts.Locker,
+		urlCache:          opts.URLCache,
+		bucket:            opts.Bucket,
+		defaultSuccessURL: opts.DefaultSuccessURL,
+		defaultCancelURL:  opts.DefaultCancelURL,
 	}
 }
 
@@ -207,5 +215,24 @@ func (r *CheckoutResolver) createSession(ctx context.Context, order *domain.Orde
 	default:
 		return nil, ErrOrderNotReady
 	}
+	// Stripe Checkout Sessions in `mode=payment` REQUIRE success_url. Fall
+	// back to gateway defaults when the merchant didn't supply one.
+	if req.SuccessURL == "" {
+		req.SuccessURL = withOrderQuery(r.defaultSuccessURL, req.ClientReferenceID)
+	}
+	if req.CancelURL == "" && r.defaultCancelURL != "" {
+		req.CancelURL = withOrderQuery(r.defaultCancelURL, req.ClientReferenceID)
+	}
 	return r.stripe.CreateCheckoutSession(ctx, req, "checkout:"+req.ClientReferenceID)
+}
+
+func withOrderQuery(base, orderID string) string {
+	if base == "" {
+		return ""
+	}
+	sep := "?"
+	if strings.Contains(base, "?") {
+		sep = "&"
+	}
+	return base + sep + "order_id=" + orderID
 }

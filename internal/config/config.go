@@ -37,6 +37,11 @@ type AppConfig struct {
 	// StripeRateLimit caps Stripe SDK calls fleet-wide via a Redis token
 	// bucket. Keep below your Stripe account quota with a safety margin.
 	StripeRateLimit int
+	// CheckoutDefaultSuccessURL / CancelURL are used when the merchant
+	// doesn't supply per-payment success_url/cancel_url. Stripe requires
+	// these for `mode=payment` Checkout Sessions.
+	CheckoutDefaultSuccessURL string
+	CheckoutDefaultCancelURL  string
 }
 
 type DBConfig struct {
@@ -88,16 +93,19 @@ type SecurityConfig struct {
 }
 
 func Load() (*Config, error) {
+	publicBase := strings.TrimRight(getenv("PUBLIC_BASE_URL", "http://localhost:8080"), "/")
 	cfg := &Config{
 		App: AppConfig{
-			Env:                 getenv("APP_ENV", "development"),
-			Port:                getenvInt("APP_PORT", 8080),
-			LogLevel:            getenv("LOG_LEVEL", "info"),
-			PublicBaseURL:       strings.TrimRight(getenv("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
-			LazyCheckout:        getenvBool("LAZY_CHECKOUT", false),
-			CheckoutTokenSecret: getenv("CHECKOUT_TOKEN_SECRET", ""),
-			CheckoutTokenTTL:    time.Duration(getenvInt("CHECKOUT_TOKEN_TTL_SECONDS", 86400)) * time.Second,
-			StripeRateLimit:     getenvInt("STRIPE_RATE_LIMIT", 80),
+			Env:                       getenv("APP_ENV", "development"),
+			Port:                      getenvInt("APP_PORT", 8080),
+			LogLevel:                  getenv("LOG_LEVEL", "info"),
+			PublicBaseURL:             publicBase,
+			LazyCheckout:              getenvBool("LAZY_CHECKOUT", false),
+			CheckoutTokenSecret:       getenv("CHECKOUT_TOKEN_SECRET", ""),
+			CheckoutTokenTTL:          time.Duration(getenvInt("CHECKOUT_TOKEN_TTL_SECONDS", 86400)) * time.Second,
+			StripeRateLimit:           getenvInt("STRIPE_RATE_LIMIT", 80),
+			CheckoutDefaultSuccessURL: getenv("CHECKOUT_DEFAULT_SUCCESS_URL", publicBase+"/checkout/success"),
+			CheckoutDefaultCancelURL:  getenv("CHECKOUT_DEFAULT_CANCEL_URL", publicBase+"/checkout/cancel"),
 		},
 		DB: DBConfig{
 			DSN:          mustGetenv("DB_DSN"),

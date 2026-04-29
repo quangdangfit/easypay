@@ -45,9 +45,12 @@ func NewRouter(deps Deps) *fiber.App {
 		app.Post("/webhook/stripe", deps.Webhook.Stripe)
 	}
 
-	// Public hosted checkout (lazy-create + redirect to Stripe).
+	// Public hosted checkout (lazy-create + redirect to Stripe) and the
+	// post-checkout success/cancel pages Stripe redirects users to.
 	if deps.Checkout != nil {
 		app.Get("/pay/:id", deps.Checkout.Redirect)
+		app.Get("/checkout/success", deps.Checkout.Success)
+		app.Get("/checkout/cancel", deps.Checkout.Cancel)
 	}
 
 	// Merchant API (HMAC + rate limit).

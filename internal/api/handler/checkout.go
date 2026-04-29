@@ -88,3 +88,22 @@ func (h *CheckoutHandler) sendInvalid(c *fiber.Ctx) error {
 	c.Set("Cache-Control", "no-store")
 	return c.Status(fiber.StatusGone).SendString(checkoutInvalidHTML)
 }
+
+// Success serves /checkout/success — Stripe redirects users here after a
+// successful payment. We don't trust this signal for state changes (the
+// webhook does that), this page is purely UX.
+func (h *CheckoutHandler) Success(c *fiber.Ctx) error {
+	orderID := c.Query("order_id")
+	c.Set(fiber.HeaderContentType, "text/html; charset=utf-8")
+	c.Set("Cache-Control", "no-store")
+	return c.SendString(fmt.Sprintf(checkoutSuccessHTML, orderID))
+}
+
+// Cancel serves /checkout/cancel — Stripe redirects users here when they
+// abort the payment. Same caveat as Success: UX only.
+func (h *CheckoutHandler) Cancel(c *fiber.Ctx) error {
+	orderID := c.Query("order_id")
+	c.Set(fiber.HeaderContentType, "text/html; charset=utf-8")
+	c.Set("Cache-Control", "no-store")
+	return c.SendString(fmt.Sprintf(checkoutCancelHTML, orderID))
+}

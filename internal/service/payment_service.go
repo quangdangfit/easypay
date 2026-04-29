@@ -73,16 +73,20 @@ type PaymentService struct {
 	publicBaseURL     string
 	checkoutSecret    string        // signs /pay/:id?t=<token> URLs
 	checkoutTokenTTL  time.Duration // how long a hosted-checkout URL is valid
+	defaultSuccessURL string
+	defaultCancelURL  string
 }
 
 type PaymentServiceOptions struct {
-	DefaultCurrency  string
-	CryptoContract   string
-	CryptoChainID    int64
-	LazyCheckout     bool
-	PublicBaseURL    string
-	CheckoutSecret   string
-	CheckoutTokenTTL time.Duration
+	DefaultCurrency   string
+	CryptoContract    string
+	CryptoChainID     int64
+	LazyCheckout      bool
+	PublicBaseURL     string
+	CheckoutSecret    string
+	CheckoutTokenTTL  time.Duration
+	DefaultSuccessURL string
+	DefaultCancelURL  string
 }
 
 func NewPaymentService(
@@ -97,17 +101,19 @@ func NewPaymentService(
 		ttl = 24 * time.Hour
 	}
 	return &PaymentService{
-		idem:             idem,
-		stripe:           stripeC,
-		publisher:        publisher,
-		pending:          pending,
-		currency:         opts.DefaultCurrency,
-		cryptoContract:   opts.CryptoContract,
-		cryptoChainID:    opts.CryptoChainID,
-		lazyCheckout:     opts.LazyCheckout,
-		publicBaseURL:    opts.PublicBaseURL,
-		checkoutSecret:   opts.CheckoutSecret,
-		checkoutTokenTTL: ttl,
+		idem:              idem,
+		stripe:            stripeC,
+		publisher:         publisher,
+		pending:           pending,
+		currency:          opts.DefaultCurrency,
+		cryptoContract:    opts.CryptoContract,
+		cryptoChainID:     opts.CryptoChainID,
+		lazyCheckout:      opts.LazyCheckout,
+		publicBaseURL:     opts.PublicBaseURL,
+		checkoutSecret:    opts.CheckoutSecret,
+		checkoutTokenTTL:  ttl,
+		defaultSuccessURL: opts.DefaultSuccessURL,
+		defaultCancelURL:  opts.DefaultCancelURL,
 	}
 }
 
@@ -181,13 +187,21 @@ func (s *PaymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 
 	default:
 		// Eager: synchronous Stripe Checkout Session creation.
+		successURL := in.SuccessURL
+		if successURL == "" {
+			successURL = s.defaultSuccessURL
+		}
+		cancelURL := in.CancelURL
+		if cancelURL == "" {
+			cancelURL = s.defaultCancelURL
+		}
 		req := stripe.CreateCheckoutRequest{
 			Amount:             in.Amount,
 			Currency:           strings.ToLower(in.Currency),
 			PaymentMethodTypes: defaultIfEmpty(in.PaymentMethodTypes, []string{"card"}),
 			CustomerEmail:      in.CustomerEmail,
-			SuccessURL:         in.SuccessURL,
-			CancelURL:          in.CancelURL,
+			SuccessURL:         successURL,
+			CancelURL:          cancelURL,
 			Metadata: map[string]string{
 				"order_id":    orderID,
 				"merchant_id": in.Merchant.MerchantID,
