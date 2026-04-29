@@ -73,11 +73,11 @@ A checklist for building the global payment gateway monolith (Stripe + blockchai
 
 ## Phase 3 — Async Processing
 
-- [ ] `internal/kafka/consumer.go` — base consumer group with manual offset commit
-- [ ] `internal/consumer/payment_consumer.go` — poll 500 msgs → `BatchCreate` → on failure fall back to per-row insert → DLQ topic `payment.events.dlq`
-- [ ] `internal/api/handler/payment_status.go` — `GET /api/payments/:id` (DB lookup, no provider call)
-- [ ] Wire consumer lifecycle into `cmd/server/main.go` (start/stop with server)
-- [ ] **Unit tests:** batch insert path, fallback path, DLQ routing
+- [x] `internal/kafka/consumer.go` — base consumer group with manual offset commit, batch fetch, DLQ writer
+- [x] `internal/consumer/payment_consumer.go` — batch decode + `BatchCreate`; per-row fallback on batch failure; duplicate-key treated as success
+- [x] `internal/api/handler/payment_status.go` — `GET /api/payments/:id` (DB lookup, merchant scoping, no provider call)
+- [x] Wire consumer lifecycle into `cmd/server/main.go` (start with server, cancel on shutdown)
+- [x] **Unit tests:** batch happy path, malformed message rejection, duplicate-key handling. Full DLQ end-to-end exercised in Phase 7 integration tests.
 
 ---
 

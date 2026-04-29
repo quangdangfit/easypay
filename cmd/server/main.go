@@ -15,6 +15,7 @@ import (
 	"github.com/quangdangfit/easypay/internal/api/handler"
 	"github.com/quangdangfit/easypay/internal/cache"
 	"github.com/quangdangfit/easypay/internal/config"
+	"github.com/quangdangfit/easypay/internal/consumer"
 	"github.com/quangdangfit/easypay/internal/kafka"
 	"github.com/quangdangfit/easypay/internal/provider/stripe"
 	"github.com/quangdangfit/easypay/internal/repository"
@@ -59,7 +60,6 @@ func run() error {
 
 	// Repos & cache helpers.
 	orderRepo := repository.NewOrderRepository(db)
-	_ = orderRepo // wired into consumers in later phases
 	merchantRepo := repository.NewMerchantRepository(db)
 	idem := cache.NewIdempotency(rc)
 	rl := cache.NewRateLimiter(rc)
@@ -71,6 +71,7 @@ func run() error {
 	paySvc := service.NewPaymentService(idem, stripeClient, publisher, cfg.Stripe.DefaultCurrency,
 		cfg.Blockchain.ContractAddress, cfg.Blockchain.ChainID)
 	payH := handler.NewPaymentHandler(paySvc)
+	payStatusH := handler.NewPaymentStatusHandler(orderRepo)
 
 	healthH := handler.NewHealthHandler(
 		&repository.MySQLPinger{DB: db},
@@ -79,12 +80,23 @@ func run() error {
 	)
 
 	app := api.NewRouter(api.Deps{
-		Health:      healthH,
-		Payment:     payH,
-		Merchants:   merchantRepo,
-		RateLimiter: rl,
-		HMACSkew:    cfg.Security.HMACTimestampSkew,
+		Health:        healthH,
+		Payment:       payH,
+		PaymentStatus: payStatusH,
+		Merchants:     merchantRepo,
+		RateLimiter:   rl,
+		HMACSkew:      cfg.Security.HMACTimestampSkew,
 	})
+
+	// Async batch consumer for payment.events → MySQL.
+	consumerCtx, consumerCancel := context.WithCancel(context.Background())
+	defer consumerCancel()
+	paymentConsumer := consumer.NewPaymentConsumer(orderRepo).NewBatch(cfg.Kafka)
+	go func() {
+		if err := paymentConsumer.Run(consumerCtx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("payment consumer exited", "err", err)
+		}
+	}()
 
 	addr := fmt.Sprintf(":%d", cfg.App.Port)
 	errCh := make(chan error, 1)
@@ -109,6 +121,7 @@ func run() error {
 	if err := app.ShutdownWithContext(shutdownCtx); err != nil {
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}
+	consumerCancel()
 	log.Info("server stopped cleanly")
 	return nil
 }

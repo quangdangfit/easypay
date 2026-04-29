@@ -12,11 +12,12 @@ import (
 )
 
 type Deps struct {
-	Health      *handler.HealthHandler
-	Payment     *handler.PaymentHandler
-	Merchants   repository.MerchantRepository
-	RateLimiter cache.RateLimiter
-	HMACSkew    time.Duration
+	Health        *handler.HealthHandler
+	Payment       *handler.PaymentHandler
+	PaymentStatus *handler.PaymentStatusHandler
+	Merchants     repository.MerchantRepository
+	RateLimiter   cache.RateLimiter
+	HMACSkew      time.Duration
 }
 
 func NewRouter(deps Deps) *fiber.App {
@@ -43,6 +44,9 @@ func NewRouter(deps Deps) *fiber.App {
 	}
 	if deps.Payment != nil {
 		merchantAPI.Post("/payments", deps.Payment.Create)
+	}
+	if deps.PaymentStatus != nil {
+		merchantAPI.Get("/payments/:id", deps.PaymentStatus.Get)
 	}
 
 	return app
