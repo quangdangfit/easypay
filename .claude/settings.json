@@ -1,5 +1,5 @@
 {
-  "$schema": "https://code.claude.com/settings.schema.json",
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
     "allow": [
       "Bash(go build ./...)",
@@ -57,6 +57,9 @@
   },
   "env": {
     "BASH_DEFAULT_TIMEOUT_MS": "30000",
-    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "16384"
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "16384",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-7",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6"
   }
 }
