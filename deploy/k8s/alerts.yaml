@@ -1,0 +1,49 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: easypay-alerts
+  labels:
+    role: alert-rules
+spec:
+  groups:
+  - name: easypay
+    rules:
+    - alert: EasypayStuckOrders
+      expr: stuck_orders_total > 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Pending orders stuck > threshold"
+        description: "{{ $value }} orders stuck longer than 30 minutes — investigate webhook delivery and reconciliation."
+    - alert: EasypayKafkaLagHigh
+      expr: max(kafka_consumer_lag) by (topic) > 5000
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Kafka consumer lag spike on {{ $labels.topic }}"
+    - alert: EasypayWebhookErrorRate
+      expr: |
+        sum(rate(http_requests_total{route="/webhook/stripe",status=~"5.."}[5m]))
+        /
+        sum(rate(http_requests_total{route="/webhook/stripe"}[5m])) > 0.01
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Stripe webhook 5xx rate above 1%"
+    - alert: EasypayStripeAPIErrors
+      expr: rate(stripe_api_errors_total[5m]) > 0.5
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Stripe API error rate high"
+    - alert: EasypayChainConfirmationLag
+      expr: blockchain_confirmation_lag_blocks > 50
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "On-chain confirmation lag > 50 blocks — RPC may be unhealthy"

@@ -1,0 +1,78 @@
+{
+  "title": "Easypay — Payment Gateway",
+  "schemaVersion": 38,
+  "tags": ["easypay", "payments"],
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "HTTP request rate (per route)",
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total[1m])) by (route)",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "datasource": "Prometheus",
+      "id": 1
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP latency p95 (per route)",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (route, le))",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "datasource": "Prometheus",
+      "id": 2
+    },
+    {
+      "type": "timeseries",
+      "title": "Stripe API errors (per category)",
+      "targets": [
+        {
+          "expr": "sum(rate(stripe_api_errors_total[5m])) by (category)",
+          "legendFormat": "{{category}}"
+        }
+      ],
+      "datasource": "Prometheus",
+      "id": 3
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka consumer lag",
+      "targets": [
+        {
+          "expr": "max(kafka_consumer_lag) by (topic)",
+          "legendFormat": "{{topic}}"
+        }
+      ],
+      "datasource": "Prometheus",
+      "id": 4
+    },
+    {
+      "type": "stat",
+      "title": "Stuck orders",
+      "targets": [
+        {
+          "expr": "stuck_orders_total"
+        }
+      ],
+      "datasource": "Prometheus",
+      "id": 5
+    },
+    {
+      "type": "timeseries",
+      "title": "On-chain confirmation lag (blocks)",
+      "targets": [
+        {
+          "expr": "blockchain_confirmation_lag_blocks"
+        }
+      ],
+      "datasource": "Prometheus",
+      "id": 6
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: easypay-config
+data:
+  APP_ENV: "production"
+  APP_PORT: "8080"
+  LOG_LEVEL: "info"
+  DB_MAX_OPEN_CONNS: "100"
+  DB_MAX_IDLE_CONNS: "25"
+  KAFKA_TOPIC_EVENTS: "payment.events"
+  KAFKA_TOPIC_CONFIRMED: "payment.confirmed"
+  KAFKA_TOPIC_DLQ: "payment.events.dlq"
+  KAFKA_CONSUMER_GROUP: "payment-engine"
+  STRIPE_API_VERSION: "2024-06-20"
+  STRIPE_DEFAULT_CURRENCY: "USD"
+  ETH_REQUIRED_CONFIRMATIONS: "12"
+  HMAC_TIMESTAMP_SKEW_SECONDS: "300"

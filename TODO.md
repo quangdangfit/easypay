@@ -141,15 +141,15 @@ A checklist for building the global payment gateway monolith (Stripe + blockchai
 
 ## Phase 8 — Deployment
 
-- [ ] Multi-stage Dockerfile produces ~20MB image
-- [ ] Kubernetes Deployment manifest (single Deployment, monolith)
-- [ ] HPA on CPU + custom metric (Kafka lag)
-- [ ] PodDisruptionBudget for graceful rollouts
-- [ ] ConfigMap for non-secret env, Secret for `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / `HMAC_SECRET` / DB creds
-- [ ] Liveness probe → `/healthz`, readiness → `/readyz`
-- [ ] Configure Stripe webhook endpoint in dashboard (production URL → `/webhook/stripe`); subscribe to `payment_intent.*`, `checkout.session.completed`, `charge.refunded`, `charge.dispute.created`
-- [ ] Grafana dashboard JSON: latency p50/p95/p99, Kafka lag, error rate, Stripe webhook delivery lag, on-chain confirmation depth
-- [ ] Alerts: stuck-order > 30 min, Kafka consumer lag > threshold, Stripe webhook 5xx rate, Stripe API error rate spike, RPC disconnect
+- [x] Multi-stage Dockerfile produces small distroless image (root)
+- [x] Kubernetes Deployment manifest (single Deployment, monolith) at `deploy/k8s/deployment.yaml`
+- [x] HPA on CPU + custom metric `kafka_consumer_lag`
+- [x] PodDisruptionBudget for graceful rollouts (`minAvailable: 1`)
+- [x] ConfigMap for non-secret env (`deploy/k8s/configmap.yaml`); Secret example for `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / `HMAC_SECRET` / DB creds (`deploy/k8s/secret.example.yaml`)
+- [x] Liveness probe → `/healthz`, readiness → `/readyz`, with preStop sleep for connection drain
+- [ ] Configure Stripe webhook endpoint in dashboard (production URL → `/webhook/stripe`); subscribe to `payment_intent.*`, `checkout.session.completed`, `charge.refunded`, `charge.dispute.created` (manual step)
+- [x] Grafana dashboard JSON at `deploy/grafana/dashboard.json` covering request rate, p95 latency, Stripe error categories, Kafka lag, stuck orders, on-chain confirmation depth
+- [x] Alerts at `deploy/k8s/alerts.yaml`: stuck-order, Kafka lag, webhook 5xx rate, Stripe API error rate, on-chain confirmation lag
 
 ---
 
