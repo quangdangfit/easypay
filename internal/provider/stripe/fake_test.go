@@ -80,7 +80,7 @@ func TestProviderError(t *testing.T) {
 		t.Fatal("empty error string")
 	}
 	if !errors.Is(pe, pe.Err) {
-		// errors.Is unwraps via Unwrap()
+		t.Fatal("errors.Is should unwrap through ProviderError.Unwrap")
 	}
 	if pe.Unwrap() == nil {
 		t.Fatal("unwrap nil")

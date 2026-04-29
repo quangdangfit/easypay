@@ -66,7 +66,9 @@ func (f *fakeOrderRepo) GetPendingBefore(ctx context.Context, before time.Time, 
 	return nil, nil
 }
 
-type fakePending struct{ store map[string]*cache.PendingOrder }
+type fakePending struct {
+	store map[string]*cache.PendingOrder
+}
 
 func (f *fakePending) Put(ctx context.Context, o *cache.PendingOrder, ttl time.Duration) error {
 	if f.store == nil {

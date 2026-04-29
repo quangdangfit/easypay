@@ -9,9 +9,22 @@ import (
 
 	kafkago "github.com/segmentio/kafka-go"
 
+	"github.com/quangdangfit/easypay/internal/config"
 	"github.com/quangdangfit/easypay/internal/domain"
 	"github.com/quangdangfit/easypay/internal/kafka"
 )
+
+// testKafkaCfg is shared across consumer tests; brokers point at a no-op
+// address, since the tests we run don't actually connect.
+func testKafkaCfg() config.KafkaConfig {
+	return config.KafkaConfig{
+		Brokers:        []string{"127.0.0.1:0"},
+		TopicEvents:    "payment.events",
+		TopicConfirmed: "payment.confirmed",
+		TopicDLQ:       "payment.events.dlq",
+		ConsumerGroup:  "test",
+	}
+}
 
 func TestPaymentConsumer_BatchHappyPath(t *testing.T) {
 	repo := &batchRepo{}

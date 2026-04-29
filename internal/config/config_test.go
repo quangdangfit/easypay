@@ -14,9 +14,9 @@ func setEnv(t *testing.T, kv map[string]string) {
 
 func TestLoad_HappyPath(t *testing.T) {
 	setEnv(t, map[string]string{
-		"DB_DSN":               "user:pass@tcp(localhost:3306)/payments",
-		"HMAC_SECRET":          "this-is-at-least-16-chars",
-		"STRIPE_SECRET_KEY":    "sk_test_x",
+		"DB_DSN":                "user:pass@tcp(localhost:3306)/payments",
+		"HMAC_SECRET":           "this-is-at-least-16-chars",
+		"STRIPE_SECRET_KEY":     "sk_test_x",
 		"STRIPE_WEBHOOK_SECRET": "whsec_x",
 	})
 	cfg, err := Load()
