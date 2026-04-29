@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	ErrInvalidRequest   = errors.New("invalid request")
+	ErrInvalidRequest    = errors.New("invalid request")
 	ErrUnsupportedMethod = errors.New("unsupported payment method")
 )
 

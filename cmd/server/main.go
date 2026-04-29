@@ -63,18 +63,18 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("mysql: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Redis.
 	rc, err := cache.NewRedis(cfg.Redis)
 	if err != nil {
 		return fmt.Errorf("redis: %w", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	// Kafka producer.
 	publisher := kafka.NewPublisher(cfg.Kafka)
-	defer publisher.Close()
+	defer func() { _ = publisher.Close() }()
 
 	// Repos & cache helpers.
 	orderRepo := repository.NewOrderRepository(db)

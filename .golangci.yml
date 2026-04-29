@@ -1,0 +1,63 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/quangdangfit/easypay
+  exclusions:
+    paths:
+      - integration_test
+      - cmd/bench
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - unconvert
+    - unparam
+    - gosec
+  settings:
+    gosec:
+      excludes:
+        # G101: hardcoded credentials — we have HMAC test fixtures in tests
+        - G101
+        # G104: errcheck overlaps with errcheck linter
+        - G104
+        # G117: marshaled "secret" field — Stripe API uses `client_secret`,
+        # this is the documented public name for an opaque-but-not-secret token
+        - G117
+        # G404: weak rng — bench uses math/rand intentionally for synthetic data
+        - G404
+    staticcheck:
+      checks:
+        - "all"
+        - "-SA1029"   # context.WithValue with unexported keys (we use ctxKey wrapper)
+        - "-ST1000"   # missing package comments
+        - "-ST1003"   # underscore in package names (Stripe SDK has these)
+        - "-ST1021"   # comment on exported types
+  exclusions:
+    generated: strict
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - unparam
+      - path: integration_test/
+        linters:
+          - errcheck
+          - gosec
+    paths:
+      - cmd/bench

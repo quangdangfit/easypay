@@ -60,8 +60,8 @@ func NewBatchConsumer(cfg config.KafkaConfig, topic string, handler BatchHandler
 }
 
 func (c *BatchConsumer) Run(ctx context.Context) error {
-	defer c.Reader.Close()
-	defer c.dlq.Close()
+	defer func() { _ = c.Reader.Close() }()
+	defer func() { _ = c.dlq.Close() }()
 
 	log := logger.L().With("topic", c.Reader.Config().Topic)
 	log.Info("consumer started")

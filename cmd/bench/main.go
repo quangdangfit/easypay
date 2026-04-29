@@ -34,17 +34,17 @@ import (
 )
 
 type config struct {
-	url          string
-	dbDSN        string
-	concurrency  int
-	total        int
-	duration     time.Duration
-	merchantID   string
-	apiKey       string
-	secretKey    string
-	method       string
-	pollStatus   bool
-	timeout      time.Duration
+	url         string
+	dbDSN       string
+	concurrency int
+	total       int
+	duration    time.Duration
+	merchantID  string
+	apiKey      string
+	secretKey   string
+	method      string
+	pollStatus  bool
+	timeout     time.Duration
 }
 
 func main() {
@@ -103,10 +103,10 @@ func run(cfg config) error {
 	}
 
 	type result struct {
-		status   int
-		latency  time.Duration
-		err      error
-		orderID  string
+		status  int
+		latency time.Duration
+		err     error
+		orderID string
 	}
 
 	results := make(chan result, cfg.concurrency*2)

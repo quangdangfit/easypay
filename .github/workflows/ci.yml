@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.11.4
+          args: --timeout=5m
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: go mod verify
+        run: go mod verify
+
+      - name: Build server + bench
+        run: |
+          go build -o /dev/null ./cmd/server
+          go build -o /dev/null ./cmd/bench
+
+  test:
+    name: Unit tests + coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Unit tests
+        run: make unittest
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.out
+          flags: unittests
+          fail_ci_if_error: false
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    # Integration tests bring up MySQL + Redis + Kafka in real containers via
+    # testcontainers-go inside the test process. Skipped on PRs from forks
+    # because they can't access secrets and Docker-in-Docker is heavier.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+
+    services:
+      # testcontainers-go manages its own containers; we just need Docker
+      # available, which the GitHub-hosted runner already provides.
+      _: ${{ '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Pull required images (warm Docker cache)
+        run: |
+          docker pull mysql:8.0 &
+          docker pull redis:7.4-alpine &
+          docker pull confluentinc/confluent-local:7.6.0 &
+          wait
+
+      - name: Run integration tests
+        env:
+          EASYPAY_INTEGRATION: '1'
+        run: |
+          go test -tags integration -timeout 600s -count=1 ./integration_test/...

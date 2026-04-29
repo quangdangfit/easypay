@@ -124,7 +124,7 @@ func (p *Pinger) Ping(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_, err = conn.Brokers()
 	return err
 }

@@ -22,13 +22,14 @@ import (
 // merchant's callback_url. Body is signed with the merchant's secret using
 // HMAC-SHA256 (X-Signature). Failures are retried via the consumer base.
 type SettlementConsumer struct {
-	httpClient   *http.Client
-	merchantKey  func(merchantID string) string
-	maxAttempts  int
+	httpClient  *http.Client
+	merchantKey func(merchantID string) string
+	maxAttempts int
 }
 
-// merchantKey is a function so test code can inject a fake without depending
-// on the merchant repository.
+// NewSettlementConsumer wires a SettlementConsumer. merchantKey is a
+// function (rather than a repository) so tests can inject a fake without
+// depending on the merchant repository concrete impl.
 func NewSettlementConsumer(merchantKey func(merchantID string) string) *SettlementConsumer {
 	return &SettlementConsumer{
 		httpClient:  &http.Client{Timeout: 10 * time.Second},
@@ -108,8 +109,8 @@ func (s *SettlementConsumer) sendOnce(ctx context.Context, url, secret string, b
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("merchant returned status %d", resp.StatusCode)
 	}

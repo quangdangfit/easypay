@@ -21,10 +21,10 @@ type MockStripe struct {
 	NextPIErr       error
 
 	// recorded calls
-	IdempotencyKeys []string
-	CheckoutCount   int
+	IdempotencyKeys    []string
+	CheckoutCount      int
 	PaymentIntentCount int
-	RefundCount     int
+	RefundCount        int
 
 	// idempotent replay store
 	checkoutByKey map[string]*stripe.CheckoutSession

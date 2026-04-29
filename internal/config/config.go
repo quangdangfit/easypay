@@ -88,8 +88,8 @@ type BlockchainConfig struct {
 }
 
 type SecurityConfig struct {
-	HMACSecret           string
-	HMACTimestampSkew    time.Duration
+	HMACSecret        string
+	HMACTimestampSkew time.Duration
 }
 
 func Load() (*Config, error) {
@@ -137,8 +137,8 @@ func Load() (*Config, error) {
 			RPCHTTP:               getenv("ETH_RPC_HTTP", ""),
 			ContractAddress:       getenv("ETH_CONTRACT_ADDRESS", ""),
 			ChainID:               int64(getenvInt("ETH_CHAIN_ID", 11155111)),
-			RequiredConfirmations: uint64(getenvInt("ETH_REQUIRED_CONFIRMATIONS", 12)),
-			StartBlock:            uint64(getenvInt("ETH_START_BLOCK", 0)),
+			RequiredConfirmations: nonNegUint64(getenvInt("ETH_REQUIRED_CONFIRMATIONS", 12)),
+			StartBlock:            nonNegUint64(getenvInt("ETH_START_BLOCK", 0)),
 		},
 		Security: SecurityConfig{
 			HMACSecret:        mustGetenv("HMAC_SECRET"),
@@ -200,6 +200,13 @@ func getenvInt(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+func nonNegUint64(v int) uint64 {
+	if v < 0 {
+		return 0
+	}
+	return uint64(v)
 }
 
 func getenvBool(key string, def bool) bool {

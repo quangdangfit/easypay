@@ -9,10 +9,11 @@ import (
 )
 
 // Listener wires the four-layer defense:
-//   Layer 1: Subscriber (WS + cursor)
-//   Layer 2: BackfillScanner (HTTP eth_getLogs)
-//   Layer 3: Reconciler (receipt re-check + stuck-order alerts)
-//   Layer 4: alert log lines emitted by Reconciler
+//
+//	Layer 1: Subscriber (WS + cursor)
+//	Layer 2: BackfillScanner (HTTP eth_getLogs)
+//	Layer 3: Reconciler (receipt re-check + stuck-order alerts)
+//	Layer 4: alert log lines emitted by Reconciler
 //
 // Each component is independently restartable; Run blocks until ctx is done
 // and waits for all goroutines to exit.

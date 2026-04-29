@@ -114,6 +114,7 @@ func (r *orderRepo) BatchCreate(ctx context.Context, orders []*domain.Order) err
 			nullStr(o.CheckoutURL), nullStr(o.CallbackURL),
 		)
 	}
+	// #nosec G202 -- cols and placeholders are compile-time constants; only ? params interpolate user data.
 	q := "INSERT INTO orders " + cols + " VALUES " + strings.Join(placeholders, ", ")
 	if _, err := r.db.ExecContext(ctx, q, args...); err != nil {
 		return fmt.Errorf("batch insert: %w", err)
@@ -129,7 +130,7 @@ func (r *orderRepo) GetPendingBefore(ctx context.Context, before time.Time, limi
 	if err != nil {
 		return nil, fmt.Errorf("query pending: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := make([]*domain.Order, 0, limit)
 	for rows.Next() {
 		o, err := scanOrder(rows)

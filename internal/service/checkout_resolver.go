@@ -28,6 +28,7 @@ import (
 //     fleet, e.g. 80 rps under Stripe's 100 rps default.
 //  6. Circuit breaker (gobreaker) — if Stripe is degraded, fail fast with
 //     ErrCircuitOpen so the user sees a polished "try again" page.
+//
 // checkoutResolver implements Checkouts.
 type checkoutResolver struct {
 	stripe            stripe.Client
@@ -115,7 +116,7 @@ func (r *checkoutResolver) Resolve(ctx context.Context, orderID string) (string,
 		time.Sleep(150 * time.Millisecond)
 		return r.resolveAfterLock(ctx, orderID)
 	}
-	defer lock.Release(ctx)
+	defer func() { _ = lock.Release(ctx) }()
 
 	// Re-check after lock — same condition as the initial cache hit.
 	// Both fields must be present, otherwise we may return a lazy URL that

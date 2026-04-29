@@ -92,10 +92,10 @@ func verifyWithTolerance(payload []byte, sigHeader, secret string, tolerance tim
 	// many helpers we don't use). We re-marshal `data.object` so callers can
 	// unmarshal into their own typed struct.
 	var raw struct {
-		ID         string          `json:"id"`
-		Type       string          `json:"type"`
-		Created    int64           `json:"created"`
-		APIVersion string          `json:"api_version"`
+		ID         string `json:"id"`
+		Type       string `json:"type"`
+		Created    int64  `json:"created"`
+		APIVersion string `json:"api_version"`
 		Data       struct {
 			Object json.RawMessage `json:"object"`
 		} `json:"data"`
@@ -122,6 +122,6 @@ func abs64(v int64) int64 {
 // SignPayload is exposed for tests and the local Stripe mock.
 func SignPayload(payload []byte, secret string, ts int64) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(fmt.Sprintf("%d.%s", ts, payload)))
+	_, _ = fmt.Fprintf(mac, "%d.%s", ts, payload)
 	return fmt.Sprintf("t=%d,v1=%s", ts, hex.EncodeToString(mac.Sum(nil)))
 }

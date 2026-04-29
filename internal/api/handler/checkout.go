@@ -16,8 +16,9 @@ type CheckoutHandler struct {
 	tokenSecret string
 }
 
-// NewCheckoutHandler. tokenSecret should be a stable secret shared across
-// pods; if empty, /pay/:id accepts any order_id (dev only).
+// NewCheckoutHandler returns a CheckoutHandler. tokenSecret should be a
+// stable secret shared across pods; if empty, /pay/:id accepts any
+// order_id (dev only).
 func NewCheckoutHandler(r service.Checkouts, tokenSecret string) *CheckoutHandler {
 	return &CheckoutHandler{resolver: r, tokenSecret: tokenSecret}
 }

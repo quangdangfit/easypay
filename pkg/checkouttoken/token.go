@@ -55,6 +55,6 @@ func Verify(secret, orderID, token string) error {
 
 func signWithExpiry(secret, orderID string, expiry int64) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(fmt.Sprintf("%s.%d", orderID, expiry)))
+	_, _ = fmt.Fprintf(mac, "%s.%d", orderID, expiry)
 	return fmt.Sprintf("%d.%s", expiry, hex.EncodeToString(mac.Sum(nil)))
 }

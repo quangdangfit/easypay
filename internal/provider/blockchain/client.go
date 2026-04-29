@@ -3,7 +3,6 @@ package blockchain
 import (
 	"context"
 	"fmt"
-	"math/big"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -110,12 +109,4 @@ func (c *ethClient) preferHTTP() *ethclient.Client {
 		return c.http
 	}
 	return c.ws
-}
-
-// helpers
-func bigOrZero(v *big.Int) *big.Int {
-	if v == nil {
-		return new(big.Int)
-	}
-	return new(big.Int).Set(v)
 }

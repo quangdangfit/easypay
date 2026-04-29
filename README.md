@@ -1,5 +1,10 @@
 # easypay
 
+[![CI](https://github.com/quangdangfit/easypay/actions/workflows/ci.yml/badge.svg)](https://github.com/quangdangfit/easypay/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/quangdangfit/easypay/graph/badge.svg)](https://codecov.io/gh/quangdangfit/easypay)
+[![Go Report Card](https://goreportcard.com/badge/github.com/quangdangfit/easypay)](https://goreportcard.com/report/github.com/quangdangfit/easypay)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A Go monolith payment gateway with **Stripe** for traditional payments and an
 **on-chain (MetaMask + smart contract)** path. Designed for high accept-layer
 throughput by deferring Stripe Session creation to user-click time

@@ -66,10 +66,8 @@ func (r *redisIdempotency) Check(ctx context.Context, key string) (bool, []byte,
 
 func (r *redisIdempotency) Set(ctx context.Context, key string, response []byte, ttl time.Duration) error {
 	bf := r.bloomKey(key)
-	// Best-effort: ignore "module not loaded" or already-exists errors.
-	if err := r.rc.Do(ctx, "BF.ADD", bf, key).Err(); err != nil && !errors.Is(err, redis.Nil) {
-		// continue — Redis cache below is still authoritative
-	}
+	// Best-effort: BF module may be missing; the Redis SET below is authoritative.
+	_ = r.rc.Do(ctx, "BF.ADD", bf, key).Err()
 	if _, err := r.rc.SetNX(ctx, r.idemKey(key), response, ttl).Result(); err != nil {
 		return fmt.Errorf("idem set: %w", err)
 	}

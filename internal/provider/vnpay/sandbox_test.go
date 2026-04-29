@@ -1,10 +1,10 @@
 // Smoke tests for VNPay sandbox. Three things are verified:
 //
-//   1. Signature math matches a hand-computed HMAC-SHA512 vector
-//      (no env / network — always runs).
-//   2. A signed checkout URL can be built end-to-end.
-//   3. The sandbox host returns 200 for the built URL (network — skips
-//      automatically when env credentials are missing).
+//  1. Signature math matches a hand-computed HMAC-SHA512 vector
+//     (no env / network — always runs).
+//  2. A signed checkout URL can be built end-to-end.
+//  3. The sandbox host returns 200 for the built URL (network — skips
+//     automatically when env credentials are missing).
 //
 // To run the network test:
 //

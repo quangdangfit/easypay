@@ -15,16 +15,16 @@ const (
 )
 
 type PendingTx struct {
-	ID                int64
-	TxHash            string
-	BlockNumber       uint64
-	OrderID           string
-	Payer             string
-	Token             string
-	Amount            *big.Int
-	ChainID           int64
-	Confirmations     uint64
-	RequiredConfirm   uint64
-	Status            PendingTxStatus
-	CreatedAt         time.Time
+	ID              int64
+	TxHash          string
+	BlockNumber     uint64
+	OrderID         string
+	Payer           string
+	Token           string
+	Amount          *big.Int
+	ChainID         int64
+	Confirmations   uint64
+	RequiredConfirm uint64
+	Status          PendingTxStatus
+	CreatedAt       time.Time
 }

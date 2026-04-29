@@ -78,7 +78,7 @@ func (r *pendingTxRepo) ListPendingByChain(ctx context.Context, chainID int64, l
 	if err != nil {
 		return nil, fmt.Errorf("query pending_txs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := make([]*domain.PendingTx, 0, limit)
 	for rows.Next() {
 		t, err := scanPendingTx(rows)

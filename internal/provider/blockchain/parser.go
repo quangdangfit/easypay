@@ -9,7 +9,8 @@ import (
 )
 
 // PaymentReceived event layout we expect:
-//   event PaymentReceived(bytes32 indexed orderId, address indexed payer, address token, uint256 amount)
+//
+//	event PaymentReceived(bytes32 indexed orderId, address indexed payer, address token, uint256 amount)
 //
 // topic[0] = keccak256(signature), topic[1] = orderId, topic[2] = payer
 // data[0:32]  = token (left-padded address)

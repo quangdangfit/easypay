@@ -14,9 +14,9 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
+	"github.com/testcontainers/testcontainers-go/modules/kafka"
 	tcmysql "github.com/testcontainers/testcontainers-go/modules/mysql"
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
-	"github.com/testcontainers/testcontainers-go/modules/kafka"
 )
 
 // TestEnv holds connections to dockerised dependencies for integration tests.
