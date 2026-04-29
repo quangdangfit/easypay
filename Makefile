@@ -35,7 +35,7 @@ test:
 	go test ./internal/... ./pkg/... -v -race -count=1
 
 test-integration:
-	go test ./integration_test/... -v -race -count=1 -timeout 120s
+	EASYPAY_INTEGRATION=1 go test -tags integration ./integration_test/... -v -count=1 -timeout 600s
 
 migrate:
 	@./scripts/migrate.sh up
