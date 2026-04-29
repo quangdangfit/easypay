@@ -122,19 +122,28 @@ func TestIdempotency_DuplicateOrder(t *testing.T) {
 		t.Fatalf("Stripe should be called once for duplicates, got %d", stripeMock.CheckoutCount)
 	}
 
-	// Verify exactly one event on the topic.
+	// Verify exactly one event on the topic. We read from partition 0
+	// directly (no consumer group) so we always see prior messages — using a
+	// new consumer group would default to StartOffset=LastOffset and skip
+	// everything already produced.
 	reader := kafkago.NewReader(kafkago.ReaderConfig{
-		Brokers: env.KafkaBrokers,
-		Topic:   kafkaCfg.TopicEvents,
-		GroupID: "verify-" + t.Name(),
-		MaxWait: time.Second,
+		Brokers:   env.KafkaBrokers,
+		Topic:     kafkaCfg.TopicEvents,
+		Partition: 0,
+		MinBytes:  1,
+		MaxBytes:  10e6,
+		MaxWait:   time.Second,
 	})
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
+	if err := reader.SetOffset(kafkago.FirstOffset); err != nil {
+		t.Fatalf("set offset: %v", err)
+	}
+
 	count := 0
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		m, err := reader.FetchMessage(ctx)
+		m, err := reader.ReadMessage(ctx)
 		cancel()
 		if err != nil {
 			break
