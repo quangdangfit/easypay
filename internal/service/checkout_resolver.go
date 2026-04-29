@@ -12,6 +12,7 @@ import (
 	"github.com/quangdangfit/easypay/internal/domain"
 	"github.com/quangdangfit/easypay/internal/provider/stripe"
 	"github.com/quangdangfit/easypay/internal/repository"
+	"github.com/quangdangfit/easypay/pkg/logger"
 )
 
 // CheckoutResolver lazily creates a Stripe Checkout Session the first time a
@@ -123,10 +124,18 @@ func (r *CheckoutResolver) Resolve(ctx context.Context, orderID string) (string,
 
 	// Tier 5: rate limit Stripe calls across the fleet.
 	if r.bucket != nil {
-		if err := r.bucket.Allow(ctx); err != nil {
+		err := r.bucket.Allow(ctx)
+		switch {
+		case err == nil:
+			// allowed
+		case errors.Is(err, cache.ErrRateLimited):
 			middleware.StripeRateLimited.Inc()
 			middleware.CheckoutResolveResult.WithLabelValues("rate_limited").Inc()
 			return "", ErrUnavailable
+		default:
+			// Redis-level error — fail open. Stripe SDK has its own client-side
+			// retries; better to over-call than to brick checkout.
+			logger.L().Warn("token bucket failed, allowing through", "err", err)
 		}
 	}
 

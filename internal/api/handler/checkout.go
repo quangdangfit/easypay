@@ -48,13 +48,16 @@ func (h *CheckoutHandler) Redirect(c *fiber.Ctx) error {
 
 	url, err := h.resolver.Resolve(c.UserContext(), orderID)
 	if err != nil {
+		log := logger.With(c.UserContext()).With("order_id", orderID, "err", err.Error())
 		switch {
 		case errors.Is(err, service.ErrOrderNotReady):
+			log.Info("checkout resolve: order not ready")
 			return h.sendNotReady(c)
 		case errors.Is(err, service.ErrUnavailable):
+			log.Warn("checkout resolve: provider unavailable (rate-limit / breaker)")
 			return h.sendUnavailable(c)
 		default:
-			logger.With(c.UserContext()).Warn("checkout resolve failed", "order_id", orderID, "err", err)
+			log.Warn("checkout resolve: unexpected error")
 			return h.sendUnavailable(c)
 		}
 	}
