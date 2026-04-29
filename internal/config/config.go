@@ -50,6 +50,12 @@ type StripeConfig struct {
 	WebhookSecret   string
 	APIVersion      string
 	DefaultCurrency string
+	// Mode controls which Stripe client implementation is used:
+	//   "live" (default) — real Stripe SDK, hits api.stripe.com
+	//   "fake"           — in-process synthetic responses, no network
+	// "fake" is intended for load tests and local e2e flows where Stripe's
+	// rate limits would dominate the measurement.
+	Mode string
 }
 
 type BlockchainConfig struct {
@@ -91,11 +97,12 @@ func Load() (*Config, error) {
 			ConsumerGroup:  getenv("KAFKA_CONSUMER_GROUP", "payment-engine"),
 		},
 		Stripe: StripeConfig{
-			SecretKey:       mustGetenv("STRIPE_SECRET_KEY"),
+			SecretKey:       getenv("STRIPE_SECRET_KEY", ""),
 			PublishableKey:  getenv("STRIPE_PUBLISHABLE_KEY", ""),
-			WebhookSecret:   mustGetenv("STRIPE_WEBHOOK_SECRET"),
+			WebhookSecret:   getenv("STRIPE_WEBHOOK_SECRET", ""),
 			APIVersion:      getenv("STRIPE_API_VERSION", "2024-06-20"),
 			DefaultCurrency: getenv("STRIPE_DEFAULT_CURRENCY", "USD"),
+			Mode:            getenv("STRIPE_MODE", "live"),
 		},
 		Blockchain: BlockchainConfig{
 			RPCWebsocket:          getenv("ETH_RPC_WS", ""),
@@ -123,6 +130,19 @@ func validate(c *Config) error {
 	}
 	if len(c.Security.HMACSecret) < 16 {
 		return fmt.Errorf("HMAC_SECRET must be at least 16 chars")
+	}
+	switch c.Stripe.Mode {
+	case "live":
+		if c.Stripe.SecretKey == "" {
+			return fmt.Errorf("STRIPE_SECRET_KEY required when STRIPE_MODE=live")
+		}
+		if c.Stripe.WebhookSecret == "" {
+			return fmt.Errorf("STRIPE_WEBHOOK_SECRET required when STRIPE_MODE=live")
+		}
+	case "fake":
+		// no requirements
+	default:
+		return fmt.Errorf("invalid STRIPE_MODE: %s (allowed: live, fake)", c.Stripe.Mode)
 	}
 	return nil
 }

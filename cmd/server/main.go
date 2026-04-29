@@ -82,8 +82,15 @@ func run() error {
 	idem := cache.NewIdempotency(rc)
 	rl := cache.NewRateLimiter(rc)
 
-	// Stripe.
-	stripeClient := stripe.NewClient(cfg.Stripe.SecretKey, cfg.Stripe.WebhookSecret, cfg.Stripe.APIVersion)
+	// Stripe — pick implementation by mode (live = SDK, fake = in-process).
+	var stripeClient stripe.Client
+	switch cfg.Stripe.Mode {
+	case "fake":
+		stripeClient = stripe.NewFake()
+		log.Warn("STRIPE_MODE=fake — using in-process synthetic responses, no real Stripe calls")
+	default:
+		stripeClient = stripe.NewClient(cfg.Stripe.SecretKey, cfg.Stripe.WebhookSecret, cfg.Stripe.APIVersion)
+	}
 
 	// Service + handlers.
 	paySvc := service.NewPaymentService(idem, stripeClient, publisher, cfg.Stripe.DefaultCurrency,
