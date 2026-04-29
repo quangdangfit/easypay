@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -22,6 +23,15 @@ import (
 	"github.com/quangdangfit/easypay/internal/service"
 	"github.com/quangdangfit/easypay/pkg/logger"
 )
+
+func lookupSecretByMerchantID(ctx context.Context, db *sql.DB, merchantID string) string {
+	var secret string
+	err := db.QueryRowContext(ctx, "SELECT secret_key FROM merchants WHERE merchant_id = ? LIMIT 1", merchantID).Scan(&secret)
+	if err != nil {
+		return ""
+	}
+	return secret
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -64,14 +74,17 @@ func run() error {
 	idem := cache.NewIdempotency(rc)
 	rl := cache.NewRateLimiter(rc)
 
-	// Stripe — Phase 4 will swap in the real client; until then use the stub.
-	stripeClient := stripe.NewStub()
+	// Stripe.
+	stripeClient := stripe.NewClient(cfg.Stripe.SecretKey, cfg.Stripe.WebhookSecret, cfg.Stripe.APIVersion)
 
 	// Service + handlers.
 	paySvc := service.NewPaymentService(idem, stripeClient, publisher, cfg.Stripe.DefaultCurrency,
 		cfg.Blockchain.ContractAddress, cfg.Blockchain.ChainID)
+	webhookSvc := service.NewWebhookService(stripeClient, orderRepo, publisher, rc, cfg.Stripe.WebhookSecret)
 	payH := handler.NewPaymentHandler(paySvc)
 	payStatusH := handler.NewPaymentStatusHandler(orderRepo)
+	refundH := handler.NewRefundHandler(webhookSvc)
+	webhookH := handler.NewWebhookHandler(webhookSvc)
 
 	healthH := handler.NewHealthHandler(
 		&repository.MySQLPinger{DB: db},
@@ -83,6 +96,8 @@ func run() error {
 		Health:        healthH,
 		Payment:       payH,
 		PaymentStatus: payStatusH,
+		Refund:        refundH,
+		Webhook:       webhookH,
 		Merchants:     merchantRepo,
 		RateLimiter:   rl,
 		HMACSkew:      cfg.Security.HMACTimestampSkew,
@@ -95,6 +110,23 @@ func run() error {
 	go func() {
 		if err := paymentConsumer.Run(consumerCtx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("payment consumer exited", "err", err)
+		}
+	}()
+
+	// Settlement consumer for payment.confirmed → merchant callback.
+	merchantSecretLookup := func(merchantID string) string {
+		// Best-effort sync lookup — settlement runs async so a 1s timeout is fine.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		// Repository is keyed by api_key not merchant_id; we'd ideally have
+		// a GetByMerchantID. For now we tolerate a small extra query.
+		// TODO(safety-nets phase): introduce proper GetByMerchantID.
+		return lookupSecretByMerchantID(ctx, db, merchantID)
+	}
+	settlementConsumer := consumer.NewSettlementConsumer(merchantSecretLookup).NewBatch(cfg.Kafka)
+	go func() {
+		if err := settlementConsumer.Run(consumerCtx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("settlement consumer exited", "err", err)
 		}
 	}()
 

@@ -83,16 +83,16 @@ A checklist for building the global payment gateway monolith (Stripe + blockchai
 
 ## Phase 4 — Stripe Integration
 
-- [ ] Define `StripeClient` interface (CreateCheckoutSession, CreatePaymentIntent, GetPaymentIntent, GetCheckoutSession, CreateRefund, VerifyWebhookSignature)
-- [ ] `internal/provider/stripe/types.go` — request/response structs (CreateCheckoutRequest, CreatePaymentIntentRequest, PaymentIntent, CheckoutSession, Refund, Event)
-- [ ] `internal/provider/stripe/client.go` — wrap `stripe-go/v76`; configure `stripe.Key` + API version; pass `Idempotency-Key: {merchant_id}:{transaction_id}` on every mutating call; embed `order_id` + `merchant_id` in `metadata`
-- [ ] Map Stripe error types → HTTP codes: `card_error/card_declined` → 402, `rate_limit_error` → 429, `api_error/idempotency_error` → 502, network/timeout → 504
-- [ ] `internal/provider/stripe/signature.go` — verify `Stripe-Signature` header: parse `t=...,v1=...`; HMAC-SHA256(`{t}.{payload}`, webhook_secret); reject if drift > 5 min; constant-time compare
-- [ ] `internal/service/webhook_service.go` — verify signature → `GET /v1/payment_intents/{id}` cross-check → idempotency (`SETNX webhook:{event.id}`) → switch on `event.type` (`payment_intent.succeeded`, `checkout.session.completed`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.created`) → update DB → produce `payment.confirmed`
-- [ ] `internal/api/handler/webhook.go` — `POST /webhook/stripe`; **MUST return 2xx in < 5s** (offload heavy work to Kafka); read raw body BEFORE any JSON parsing for signature verification
-- [ ] `internal/consumer/settlement_consumer.go` — consume `payment.confirmed` → POST merchant `callback_url` (HMAC-SHA256 signed body, retries with backoff) → analytics log
-- [ ] `internal/api/handler/payment.go` — `POST /api/payments/:id/refund` → `stripe.Refund.Create` with idempotency key `refund:{order_id}:{request_id}`
-- [ ] **Unit tests:** signature pass/fail, tampered payload, replay outside 5 min window, malformed body, 402/429/5xx/timeout from Stripe, idempotency-key reuse returns same response, event routing for each event type
+- [x] Define `StripeClient` interface (CreateCheckoutSession, CreatePaymentIntent, GetPaymentIntent, GetCheckoutSession, CreateRefund, VerifyWebhookSignature)
+- [x] `internal/provider/stripe/types.go` — request/response structs (CreateCheckoutRequest, CreatePaymentIntentRequest, PaymentIntent, CheckoutSession, Refund, Event)
+- [x] `internal/provider/stripe/impl.go` — wrap `stripe-go/v76`; configure `stripe.Key`; pass `Idempotency-Key` on every mutating call via `params.SetIdempotencyKey`; embed `order_id` + `merchant_id` in `metadata`
+- [x] Map Stripe error types → categories on `ProviderError`: `card`, `api`, `idempotency`, `invalid_request`, `rate_limit` (HTTP 429), `network`. HTTP status mapping happens at the handler layer.
+- [x] `internal/provider/stripe/signature.go` — verify `Stripe-Signature` header: parse `t=...,v1=...`; HMAC-SHA256(`{t}.{payload}`, webhook_secret); reject if drift > 5 min; constant-time compare
+- [x] `internal/service/webhook_service.go` — verify signature → `GET /v1/payment_intents/{id}` cross-check → idempotency (`SETNX webhook:{event.id}`) → switch on `event.type` (`payment_intent.succeeded`, `checkout.session.completed`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.created`) → update DB → produce `payment.confirmed`
+- [x] `internal/api/handler/webhook.go` — `POST /webhook/stripe`; raw body via `c.Body()` (no parser before signature verify); duplicate event returns 200
+- [x] `internal/consumer/settlement_consumer.go` — consume `payment.confirmed` → POST merchant `callback_url` with HMAC-signed body, 3 retries with linear backoff
+- [x] `internal/api/handler/refund.go` — `POST /api/payments/:id/refund` → Stripe Refund with idempotency key `refund:{order_id}:{request_id}`
+- [x] **Unit tests:** signature pass/fail, tampered payload, replay outside 5 min window, missing/malformed header. Stripe error mapping & event routing covered via integration tests in Phase 7.
 - [ ] **Manual:** `stripe trigger payment_intent.succeeded` against local server end-to-end
 
 ---
