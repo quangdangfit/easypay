@@ -87,6 +87,45 @@ func TestBreaker_TripsAfterFailures(t *testing.T) {
 	}
 }
 
+func TestBreaker_AllMethodsPassThroughOnSuccess(t *testing.T) {
+	inner := &failClient{}
+	c := NewBreakerClient(inner, "passthrough")
+	ctx := context.Background()
+	if _, err := c.CreatePaymentIntent(ctx, CreatePaymentIntentRequest{}, "i"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetPaymentIntent(ctx, "pi_x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetCheckoutSession(ctx, "cs_x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.CreateRefund(ctx, CreateRefundRequest{}, "i"); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = c.VerifyWebhookSignature(nil, "", "")
+}
+
+func TestBreaker_AllMethodsReturnOpenWhenTripped(t *testing.T) {
+	inner := &failClient{err: &ProviderError{Op: "x", Category: "network", Err: errors.New("conn")}}
+	c := NewBreakerClient(inner, "tripped")
+	for i := 0; i < 30; i++ {
+		_, _ = c.CreateCheckoutSession(context.Background(), CreateCheckoutRequest{}, "i")
+	}
+	if _, err := c.CreatePaymentIntent(context.Background(), CreatePaymentIntentRequest{}, "i"); !errors.Is(err, ErrCircuitOpen) {
+		t.Errorf("CreatePaymentIntent: %v", err)
+	}
+	if _, err := c.GetPaymentIntent(context.Background(), "pi"); !errors.Is(err, ErrCircuitOpen) {
+		t.Errorf("GetPaymentIntent: %v", err)
+	}
+	if _, err := c.GetCheckoutSession(context.Background(), "cs"); !errors.Is(err, ErrCircuitOpen) {
+		t.Errorf("GetCheckoutSession: %v", err)
+	}
+	if _, err := c.CreateRefund(context.Background(), CreateRefundRequest{}, "i"); !errors.Is(err, ErrCircuitOpen) {
+		t.Errorf("CreateRefund: %v", err)
+	}
+}
+
 func TestBreaker_CardErrorsDoNotTrip(t *testing.T) {
 	cardErr := &ProviderError{Op: "x", Category: "card", Err: errors.New("declined")}
 	inner := &failClient{err: cardErr}

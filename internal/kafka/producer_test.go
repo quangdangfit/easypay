@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
 
@@ -59,4 +60,29 @@ func TestPublisher_Close(t *testing.T) {
 	if err := p.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
+}
+
+func TestPublishPaymentEvent_NoBrokerErrors(t *testing.T) {
+	p := NewPublisher(config.KafkaConfig{
+		Brokers:        []string{"127.0.0.1:1"},
+		TopicEvents:    "t1",
+		TopicConfirmed: "t2",
+		TopicDLQ:       "t3",
+	})
+	defer func() { _ = p.Close() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	// Without a broker, this should error (timeout / connection refused).
+	// We just want to exercise the marshalling + WriteMessages code path.
+	_ = p.PublishPaymentEvent(ctx, PaymentEvent{OrderID: "ORD-1", MerchantID: "M1"})
+	_ = p.PublishPaymentConfirmed(ctx, PaymentConfirmedEvent{OrderID: "ORD-1"})
+}
+
+func TestEnsureTopics_NoBrokers(t *testing.T) {
+	// Should be a silent no-op, not panic.
+	ensureTopics(nil, "t")
+}
+
+func TestEnsureTopics_BadBroker(t *testing.T) {
+	ensureTopics([]string{"127.0.0.1:1"}, "t")
 }

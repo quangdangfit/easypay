@@ -57,6 +57,29 @@ func TestPaymentConsumer_RejectsMalformed(t *testing.T) {
 	}
 }
 
+func TestPaymentConsumer_NewBatchWiresUp(t *testing.T) {
+	c := NewPaymentConsumer(&batchRepo{})
+	bc := c.NewBatch(testKafkaCfg())
+	if bc == nil {
+		t.Fatal("nil batch consumer")
+	}
+}
+
+func TestIsDuplicateError(t *testing.T) {
+	if !isDuplicateError(errors.New("Error 1062: Duplicate entry 'x'")) {
+		t.Error("1062 not detected")
+	}
+	if !isDuplicateError(errors.New("Duplicate entry 'x' for key 'y'")) {
+		t.Error("Duplicate entry phrase not detected")
+	}
+	if isDuplicateError(errors.New("connection refused")) {
+		t.Error("non-dup matched")
+	}
+	if isDuplicateError(nil) {
+		t.Error("nil matched")
+	}
+}
+
 func mustEvent(t *testing.T, orderID, merchantID, txID string) kafkago.Message {
 	t.Helper()
 	b, err := json.Marshal(kafka.PaymentEvent{
