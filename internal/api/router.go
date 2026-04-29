@@ -17,6 +17,7 @@ type Deps struct {
 	PaymentStatus *handler.PaymentStatusHandler
 	Refund        *handler.RefundHandler
 	Webhook       *handler.WebhookHandler
+	Checkout      *handler.CheckoutHandler
 	Merchants     repository.MerchantRepository
 	RateLimiter   cache.RateLimiter
 	HMACSkew      time.Duration
@@ -42,6 +43,11 @@ func NewRouter(deps Deps) *fiber.App {
 	// secret, verified inside the handler).
 	if deps.Webhook != nil {
 		app.Post("/webhook/stripe", deps.Webhook.Stripe)
+	}
+
+	// Public hosted checkout (lazy-create + redirect to Stripe).
+	if deps.Checkout != nil {
+		app.Get("/pay/:id", deps.Checkout.Redirect)
 	}
 
 	// Merchant API (HMAC + rate limit).

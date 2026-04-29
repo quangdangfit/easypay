@@ -22,6 +22,13 @@ type AppConfig struct {
 	Env      string
 	Port     int
 	LogLevel string
+	// PublicBaseURL is the externally-reachable origin of this service. It is
+	// used to mint hosted-checkout URLs when LazyCheckout is enabled.
+	PublicBaseURL string
+	// LazyCheckout, when true, skips the Stripe call on POST /api/payments and
+	// returns a self-hosted checkout_url. The actual Stripe Session is created
+	// on-demand the first time the URL is opened.
+	LazyCheckout bool
 }
 
 type DBConfig struct {
@@ -75,9 +82,11 @@ type SecurityConfig struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		App: AppConfig{
-			Env:      getenv("APP_ENV", "development"),
-			Port:     getenvInt("APP_PORT", 8080),
-			LogLevel: getenv("LOG_LEVEL", "info"),
+			Env:           getenv("APP_ENV", "development"),
+			Port:          getenvInt("APP_PORT", 8080),
+			LogLevel:      getenv("LOG_LEVEL", "info"),
+			PublicBaseURL: strings.TrimRight(getenv("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
+			LazyCheckout:  getenvBool("LAZY_CHECKOUT", false),
 		},
 		DB: DBConfig{
 			DSN:          mustGetenv("DB_DSN"),
@@ -172,4 +181,16 @@ func getenvInt(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+func getenvBool(key string, def bool) bool {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
 }

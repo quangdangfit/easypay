@@ -37,7 +37,11 @@ func TestCreateOrder_HappyPath(t *testing.T) {
 	publisher := kafka.NewPublisher(kafkaCfg)
 	defer publisher.Close()
 
-	svc := service.NewPaymentService(idem, stripeMock, publisher, "USD", "0xCONTRACT", 11155111)
+	svc := service.NewPaymentService(idem, stripeMock, publisher, nil, service.PaymentServiceOptions{
+		DefaultCurrency: "USD",
+		CryptoContract:  "0xCONTRACT",
+		CryptoChainID:   11155111,
+	})
 
 	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s", RateLimit: 100}
 	res, err := svc.Create(context.Background(), service.CreatePaymentInput{
@@ -93,7 +97,11 @@ func TestIdempotency_DuplicateOrder(t *testing.T) {
 	publisher := kafka.NewPublisher(kafkaCfg)
 	defer publisher.Close()
 
-	svc := service.NewPaymentService(idem, stripeMock, publisher, "USD", "0xCONTRACT", 11155111)
+	svc := service.NewPaymentService(idem, stripeMock, publisher, nil, service.PaymentServiceOptions{
+		DefaultCurrency: "USD",
+		CryptoContract:  "0xCONTRACT",
+		CryptoChainID:   11155111,
+	})
 	merchant := &domain.Merchant{MerchantID: "M_IDEM", SecretKey: "s", RateLimit: 100}
 	in := service.CreatePaymentInput{
 		Merchant: merchant, TransactionID: "TXN-DUPE", Amount: 999, Currency: "USD",

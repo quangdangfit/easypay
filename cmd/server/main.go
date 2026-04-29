@@ -81,6 +81,8 @@ func run() error {
 	merchantRepo := repository.NewMerchantRepository(db)
 	idem := cache.NewIdempotency(rc)
 	rl := cache.NewRateLimiter(rc)
+	pendingOrders := cache.NewPendingOrderStore(rc)
+	locker := cache.NewLocker(rc)
 
 	// Stripe — pick implementation by mode (live = SDK, fake = in-process).
 	var stripeClient stripe.Client
@@ -93,13 +95,20 @@ func run() error {
 	}
 
 	// Service + handlers.
-	paySvc := service.NewPaymentService(idem, stripeClient, publisher, cfg.Stripe.DefaultCurrency,
-		cfg.Blockchain.ContractAddress, cfg.Blockchain.ChainID)
+	paySvc := service.NewPaymentService(idem, stripeClient, publisher, pendingOrders, service.PaymentServiceOptions{
+		DefaultCurrency: cfg.Stripe.DefaultCurrency,
+		CryptoContract:  cfg.Blockchain.ContractAddress,
+		CryptoChainID:   cfg.Blockchain.ChainID,
+		LazyCheckout:    cfg.App.LazyCheckout,
+		PublicBaseURL:   cfg.App.PublicBaseURL,
+	})
 	webhookSvc := service.NewWebhookService(stripeClient, orderRepo, publisher, rc, cfg.Stripe.WebhookSecret)
+	checkoutResolver := service.NewCheckoutResolver(stripeClient, orderRepo, pendingOrders, locker)
 	payH := handler.NewPaymentHandler(paySvc)
 	payStatusH := handler.NewPaymentStatusHandler(orderRepo)
 	refundH := handler.NewRefundHandler(webhookSvc)
 	webhookH := handler.NewWebhookHandler(webhookSvc)
+	checkoutH := handler.NewCheckoutHandler(checkoutResolver)
 
 	healthH := handler.NewHealthHandler(
 		&repository.MySQLPinger{DB: db},
@@ -113,6 +122,7 @@ func run() error {
 		PaymentStatus: payStatusH,
 		Refund:        refundH,
 		Webhook:       webhookH,
+		Checkout:      checkoutH,
 		Merchants:     merchantRepo,
 		RateLimiter:   rl,
 		HMACSkew:      cfg.Security.HMACTimestampSkew,

@@ -75,6 +75,7 @@ func (r *batchRepo) Create(ctx context.Context, o *domain.Order) error {
 func (r *batchRepo) GetByOrderID(ctx context.Context, id string) (*domain.Order, error)         { return nil, nil }
 func (r *batchRepo) GetByPaymentIntentID(ctx context.Context, p string) (*domain.Order, error)  { return nil, nil }
 func (r *batchRepo) UpdateStatus(ctx context.Context, id string, s domain.OrderStatus, p string) error { return nil }
+func (r *batchRepo) UpdateCheckout(ctx context.Context, id, ssid, pi, url string) error { return nil }
 func (r *batchRepo) BatchCreate(ctx context.Context, orders []*domain.Order) error {
 	if r.batchErr != nil {
 		return r.batchErr

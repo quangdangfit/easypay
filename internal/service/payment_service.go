@@ -57,30 +57,46 @@ type CryptoPayload struct {
 }
 
 type PaymentService struct {
-	idem     cache.IdempotencyChecker
-	stripe   stripe.Client
+	idem      cache.IdempotencyChecker
+	stripe    stripe.Client
 	publisher kafka.EventPublisher
-	currency string
+	pending   cache.PendingOrderStore
+	currency  string
 	// Crypto contract details
 	cryptoContract string
 	cryptoChainID  int64
+	// Lazy checkout: if true, POST /api/payments returns a self-hosted URL
+	// and the Stripe Session is created on first hit of /pay/:id. Lets the
+	// merchant API scale beyond Stripe's per-account rate limits.
+	lazyCheckout  bool
+	publicBaseURL string
+}
+
+type PaymentServiceOptions struct {
+	DefaultCurrency string
+	CryptoContract  string
+	CryptoChainID   int64
+	LazyCheckout    bool
+	PublicBaseURL   string
 }
 
 func NewPaymentService(
 	idem cache.IdempotencyChecker,
 	stripeC stripe.Client,
 	publisher kafka.EventPublisher,
-	defaultCurrency string,
-	cryptoContract string,
-	cryptoChainID int64,
+	pending cache.PendingOrderStore,
+	opts PaymentServiceOptions,
 ) *PaymentService {
 	return &PaymentService{
 		idem:           idem,
 		stripe:         stripeC,
 		publisher:      publisher,
-		currency:       defaultCurrency,
-		cryptoContract: cryptoContract,
-		cryptoChainID:  cryptoChainID,
+		pending:        pending,
+		currency:       opts.DefaultCurrency,
+		cryptoContract: opts.CryptoContract,
+		cryptoChainID:  opts.CryptoChainID,
+		lazyCheckout:   opts.LazyCheckout,
+		publicBaseURL:  opts.PublicBaseURL,
 	}
 }
 
@@ -115,15 +131,37 @@ func (s *PaymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 		Status:        "accepted",
 	}
 
-	if strings.EqualFold(in.Method, "crypto") {
+	switch {
+	case strings.EqualFold(in.Method, "crypto"):
 		result.CryptoPayload = &CryptoPayload{
 			ContractAddress: s.cryptoContract,
 			OrderID:         orderID,
 			Amount:          in.Amount,
 			ChainID:         s.cryptoChainID,
 		}
-	} else {
-		// 4. Call Stripe Checkout Session.
+
+	case s.lazyCheckout:
+		// Lazy: skip Stripe entirely. The first hit on /pay/:id will create
+		// the session. Stash a snapshot in Redis so the public handler can
+		// resolve the order even before the consumer commits to MySQL.
+		result.CheckoutURL = s.publicBaseURL + "/pay/" + orderID
+		if s.pending != nil {
+			_ = s.pending.Put(ctx, &cache.PendingOrder{
+				OrderID:       orderID,
+				MerchantID:    in.Merchant.MerchantID,
+				TransactionID: in.TransactionID,
+				Amount:        in.Amount,
+				Currency:      strings.ToUpper(in.Currency),
+				PaymentMethod: primaryMethod(in),
+				CustomerEmail: in.CustomerEmail,
+				SuccessURL:    in.SuccessURL,
+				CancelURL:     in.CancelURL,
+				CreatedAt:     time.Now().UTC().Unix(),
+			}, 24*time.Hour)
+		}
+
+	default:
+		// Eager: synchronous Stripe Checkout Session creation.
 		req := stripe.CreateCheckoutRequest{
 			Amount:             in.Amount,
 			Currency:           strings.ToLower(in.Currency),

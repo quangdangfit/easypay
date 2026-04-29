@@ -18,6 +18,7 @@ type OrderRepository interface {
 	GetByOrderID(ctx context.Context, orderID string) (*domain.Order, error)
 	GetByPaymentIntentID(ctx context.Context, pi string) (*domain.Order, error)
 	UpdateStatus(ctx context.Context, orderID string, status domain.OrderStatus, stripePaymentIntentID string) error
+	UpdateCheckout(ctx context.Context, orderID, stripeSessionID, stripePaymentIntentID, checkoutURL string) error
 	BatchCreate(ctx context.Context, orders []*domain.Order) error
 	GetPendingBefore(ctx context.Context, before time.Time, limit int) ([]*domain.Order, error)
 }
@@ -75,6 +76,22 @@ func (r *orderRepo) UpdateStatus(ctx context.Context, orderID string, status dom
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *orderRepo) UpdateCheckout(ctx context.Context, orderID, sessionID, piID, checkoutURL string) error {
+	const q = `UPDATE orders SET
+		stripe_session_id        = COALESCE(NULLIF(?, ''), stripe_session_id),
+		stripe_payment_intent_id = COALESCE(NULLIF(?, ''), stripe_payment_intent_id),
+		checkout_url             = COALESCE(NULLIF(?, ''), checkout_url)
+		WHERE order_id = ?`
+	res, err := r.db.ExecContext(ctx, q, sessionID, piID, checkoutURL, orderID)
+	if err != nil {
+		return fmt.Errorf("update checkout: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
 	return nil

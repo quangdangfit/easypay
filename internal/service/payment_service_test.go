@@ -78,7 +78,11 @@ func newSvc() (*PaymentService, *fakeStripe, *fakePublisher, *fakeIdem) {
 	idem := &fakeIdem{}
 	stripeC := &fakeStripe{}
 	pub := &fakePublisher{}
-	svc := NewPaymentService(idem, stripeC, pub, "USD", "0xCONTRACT", 11155111)
+	svc := NewPaymentService(idem, stripeC, pub, nil, PaymentServiceOptions{
+		DefaultCurrency: "USD",
+		CryptoContract:  "0xCONTRACT",
+		CryptoChainID:   11155111,
+	})
 	return svc, stripeC, pub, idem
 }
 
