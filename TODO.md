@@ -31,10 +31,7 @@ A checklist for building the global payment gateway monolith (Stripe + blockchai
 - [x] `internal/api/router.go` — Fiber app, register middleware + health routes
 - [x] `cmd/server/main.go` — wire config → deps → router; signal-based graceful shutdown (SIGTERM, drain in-flight)
 - [x] `docker-compose.yml` — MySQL 8, Redis 7, Kafka in KRaft mode (no Zookeeper, with healthchecks)
-- [x] `migrations/001_create_orders.sql` — per CLAUDE.md schema (Stripe ID columns + `idx_stripe_pi` index)
-- [x] `migrations/002_create_pending_txs.sql`
-- [x] `migrations/003_create_merchants.sql`
-- [x] `migrations/004_create_block_cursors.sql`
+- [x] `migrations/001_init_schema.sql` — single migration covering orders, pending_txs, merchants, block_cursors per CLAUDE.md (Stripe ID columns + `idx_stripe_pi` index)
 - [x] Migration runner (`golang-migrate` via `scripts/migrate.sh` / `make migrate`)
 - [ ] **Smoke test:** `make run` boots, `/healthz` returns 200, `/readyz` returns 200 against compose stack
 
