@@ -268,5 +268,5 @@ func defaultIfEmpty(v, def []string) []string {
 }
 
 func generateOrderID() string {
-	return "ORD-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:24]
+	return "ord-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:24]
 }
