@@ -238,8 +238,8 @@ func TestStripeClient_HappyPath(t *testing.T) {
 		Amount:             2500,
 		Currency:           "usd",
 		PaymentMethodTypes: []string{"card"},
-		ClientReferenceID:  "ORD-HAPPY",
-		Metadata:           map[string]string{"order_id": "ORD-HAPPY"},
+		ClientReferenceID:  "ord-happy",
+		Metadata:           map[string]string{"order_id": "ord-happy"},
 	}, "idem-happy")
 	if err != nil {
 		t.Fatalf("err: %v", err)

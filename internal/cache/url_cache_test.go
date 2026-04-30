@@ -8,8 +8,8 @@ import (
 
 func TestURLCache_PutGet(t *testing.T) {
 	c := NewURLCache(8, time.Second)
-	c.Put("ORD-1", "https://x")
-	got, ok := c.Get("ORD-1")
+	c.Put("ord-1", "https://x")
+	got, ok := c.Get("ord-1")
 	if !ok || got != "https://x" {
 		t.Fatalf("got=%q ok=%v", got, ok)
 	}
@@ -24,18 +24,18 @@ func TestURLCache_MissOnUnknown(t *testing.T) {
 
 func TestURLCache_TTLExpiry(t *testing.T) {
 	c := NewURLCache(8, 10*time.Millisecond)
-	c.Put("ORD-1", "https://x")
+	c.Put("ord-1", "https://x")
 	time.Sleep(25 * time.Millisecond)
-	if _, ok := c.Get("ORD-1"); ok {
+	if _, ok := c.Get("ord-1"); ok {
 		t.Fatal("expected expiry")
 	}
 }
 
 func TestURLCache_Invalidate(t *testing.T) {
 	c := NewURLCache(8, time.Second)
-	c.Put("ORD-1", "https://x")
-	c.Invalidate("ORD-1")
-	if _, ok := c.Get("ORD-1"); ok {
+	c.Put("ord-1", "https://x")
+	c.Invalidate("ord-1")
+	if _, ok := c.Get("ord-1"); ok {
 		t.Fatal("expected invalidated")
 	}
 }

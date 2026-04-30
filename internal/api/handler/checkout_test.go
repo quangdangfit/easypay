@@ -18,11 +18,11 @@ import (
 func TestCheckout_HappyPathRedirect(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	co := svcmock.NewMockCheckouts(ctrl)
-	co.EXPECT().Resolve(gomock.Any(), "ORD-1").Return("https://checkout.stripe.com/x", nil)
+	co.EXPECT().Resolve(gomock.Any(), "ord-1").Return("https://checkout.stripe.com/x", nil)
 
 	app := fiber.New()
 	app.Get("/pay/:id", NewCheckoutHandler(co, "").Redirect)
-	resp, err := app.Test(httptest.NewRequest("GET", "/pay/ORD-1", nil))
+	resp, err := app.Test(httptest.NewRequest("GET", "/pay/ord-1", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestCheckout_NotReadyShowsHTML(t *testing.T) {
 
 	app := fiber.New()
 	app.Get("/pay/:id", NewCheckoutHandler(co, "").Redirect)
-	resp, err := app.Test(httptest.NewRequest("GET", "/pay/ORD-1", nil))
+	resp, err := app.Test(httptest.NewRequest("GET", "/pay/ord-1", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestCheckout_UnavailableShowsHTML(t *testing.T) {
 
 	app := fiber.New()
 	app.Get("/pay/:id", NewCheckoutHandler(co, "").Redirect)
-	resp, err := app.Test(httptest.NewRequest("GET", "/pay/ORD-1", nil))
+	resp, err := app.Test(httptest.NewRequest("GET", "/pay/ord-1", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestCheckout_UnexpectedErrorShowsUnavailable(t *testing.T) {
 
 	app := fiber.New()
 	app.Get("/pay/:id", NewCheckoutHandler(co, "").Redirect)
-	resp, err := app.Test(httptest.NewRequest("GET", "/pay/ORD-1", nil))
+	resp, err := app.Test(httptest.NewRequest("GET", "/pay/ord-1", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestCheckout_TokenRequiredWhenSecretSet(t *testing.T) {
 
 	app := fiber.New()
 	app.Get("/pay/:id", NewCheckoutHandler(co, "secret").Redirect)
-	resp, err := app.Test(httptest.NewRequest("GET", "/pay/ORD-1", nil))
+	resp, err := app.Test(httptest.NewRequest("GET", "/pay/ord-1", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestCheckout_BadTokenRejected(t *testing.T) {
 
 	app := fiber.New()
 	app.Get("/pay/:id", NewCheckoutHandler(co, "secret").Redirect)
-	resp, _ := app.Test(httptest.NewRequest("GET", "/pay/ORD-1?t=garbage", nil))
+	resp, _ := app.Test(httptest.NewRequest("GET", "/pay/ord-1?t=garbage", nil))
 	if resp.StatusCode != 410 {
 		t.Fatalf("expected 410, got %d", resp.StatusCode)
 	}
@@ -116,12 +116,12 @@ func TestCheckout_BadTokenRejected(t *testing.T) {
 func TestCheckout_GoodTokenAccepted(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	co := svcmock.NewMockCheckouts(ctrl)
-	co.EXPECT().Resolve(gomock.Any(), "ORD-1").Return("https://x", nil)
+	co.EXPECT().Resolve(gomock.Any(), "ord-1").Return("https://x", nil)
 
-	tok := checkouttoken.Sign("secret", "ORD-1", time.Hour)
+	tok := checkouttoken.Sign("secret", "ord-1", time.Hour)
 	app := fiber.New()
 	app.Get("/pay/:id", NewCheckoutHandler(co, "secret").Redirect)
-	resp, _ := app.Test(httptest.NewRequest("GET", "/pay/ORD-1?t="+tok, nil))
+	resp, _ := app.Test(httptest.NewRequest("GET", "/pay/ord-1?t="+tok, nil))
 	if resp.StatusCode != 302 {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
@@ -136,7 +136,7 @@ func TestCheckout_SuccessAndCancelPages(t *testing.T) {
 	app.Get("/checkout/success", h.Success)
 	app.Get("/checkout/cancel", h.Cancel)
 
-	for _, path := range []string{"/checkout/success?order_id=ORD-1", "/checkout/cancel?order_id=ORD-1"} {
+	for _, path := range []string{"/checkout/success?order_id=ord-1", "/checkout/cancel?order_id=ord-1"} {
 		resp, err := app.Test(httptest.NewRequest("GET", path, nil))
 		if err != nil {
 			t.Fatalf("%s: %v", path, err)

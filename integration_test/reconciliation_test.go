@@ -31,7 +31,7 @@ func TestReconciliationCron(t *testing.T) {
 	// reconciler's StuckAfter knob to consider it stuck — backdating the row
 	// in DB sidesteps the production 10-minute wait.
 	stuck := &domain.Order{
-		OrderID:               "ORD-RECON-1",
+		OrderID:               "ord-recon-1",
 		MerchantID:            "M_RECON",
 		TransactionID:         "TXN-RECON-1",
 		Amount:                2500,

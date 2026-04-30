@@ -13,7 +13,7 @@ import (
 
 func TestPaymentEventEncoding(t *testing.T) {
 	e := PaymentEvent{
-		OrderID: "ORD-1", MerchantID: "M1", TransactionID: "TXN-1",
+		OrderID: "ord-1", MerchantID: "M1", TransactionID: "TXN-1",
 		Amount: 1500, Currency: "USD", PaymentMethod: "card",
 		Status: "pending", CreatedAt: 1,
 	}
@@ -74,8 +74,8 @@ func TestPublishPaymentEvent_NoBrokerErrors(t *testing.T) {
 	defer cancel()
 	// Without a broker, this should error (timeout / connection refused).
 	// We just want to exercise the marshalling + WriteMessages code path.
-	_ = p.PublishPaymentEvent(ctx, PaymentEvent{OrderID: "ORD-1", MerchantID: "M1"})
-	_ = p.PublishPaymentConfirmed(ctx, PaymentConfirmedEvent{OrderID: "ORD-1"})
+	_ = p.PublishPaymentEvent(ctx, PaymentEvent{OrderID: "ord-1", MerchantID: "M1"})
+	_ = p.PublishPaymentConfirmed(ctx, PaymentConfirmedEvent{OrderID: "ord-1"})
 }
 
 func TestEnsureTopics_NoBrokers(t *testing.T) {

@@ -28,7 +28,7 @@ func TestBlockchainTxHashDedup(t *testing.T) {
 	tx := &domain.PendingTx{
 		TxHash:          hash,
 		BlockNumber:     1234,
-		OrderID:         "ORD-CHAIN-1",
+		OrderID:         "ord-chain-1",
 		Payer:           "0x" + strings.Repeat("11", 20),
 		Token:           "0x" + strings.Repeat("22", 20),
 		Amount:          big.NewInt(1_000_000_000),
@@ -45,7 +45,7 @@ func TestBlockchainTxHashDedup(t *testing.T) {
 	dup := &domain.PendingTx{
 		TxHash:          hash,
 		BlockNumber:     5678,
-		OrderID:         "ORD-CHAIN-2",
+		OrderID:         "ord-chain-2",
 		Amount:          big.NewInt(1),
 		ChainID:         11155111,
 		RequiredConfirm: 12,
@@ -72,7 +72,7 @@ func TestBlockchainTxHashDedup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get original: %v", err)
 	}
-	if got.OrderID != "ORD-CHAIN-1" || got.BlockNumber != 1234 {
+	if got.OrderID != "ord-chain-1" || got.BlockNumber != 1234 {
 		t.Fatalf("original mutated: %+v", got)
 	}
 }

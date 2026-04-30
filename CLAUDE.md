@@ -333,7 +333,7 @@ GET    /metrics                   # Prometheus metrics
 
 // Response 202
 {
-  "order_id": "ORD-abc123",
+  "order_id": "ord-abc123",
   "transaction_id": "TXN-20260429-001",
   "stripe_session_id": "cs_test_a1b2c3...",
   "checkout_url": "https://checkout.stripe.com/c/pay/cs_test_a1b2c3...",
@@ -359,7 +359,7 @@ GET    /metrics                   # Prometheus metrics
       "amount": 1500,
       "currency": "usd",
       "status": "succeeded",
-      "metadata": { "order_id": "ORD-abc123" }
+      "metadata": { "order_id": "ord-abc123" }
     }
   },
   "created": 1714377600

@@ -174,11 +174,11 @@ func TestPendingOrderStore_PutGet(t *testing.T) {
 	rc, _ := rclient(t)
 	s := NewPendingOrderStore(rc)
 	ctx := context.Background()
-	o := &PendingOrder{OrderID: "ORD-1", MerchantID: "M1", Amount: 100, Currency: "USD"}
+	o := &PendingOrder{OrderID: "ord-1", MerchantID: "M1", Amount: 100, Currency: "USD"}
 	if err := s.Put(ctx, o, time.Minute); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	got, err := s.Get(ctx, "ORD-1")
+	got, err := s.Get(ctx, "ord-1")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}

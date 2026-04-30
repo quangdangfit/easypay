@@ -30,10 +30,10 @@ func TestRefundHandler_HappyPath(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc := svcmock.NewMockWebhooks(ctrl)
 	svc.EXPECT().CreateRefund(gomock.Any(), gomock.Any()).
-		Return(&service.RefundResult{OrderID: "ORD-1", RefundID: "re_x", Status: "succeeded", Amount: 500, Currency: "usd"}, nil)
+		Return(&service.RefundResult{OrderID: "ord-1", RefundID: "re_x", Status: "succeeded", Amount: 500, Currency: "usd"}, nil)
 
 	app := newRefundApp(svc)
-	req := httptest.NewRequest("POST", "/api/payments/ORD-1/refund", strings.NewReader(`{"amount":500,"reason":"requested_by_customer"}`))
+	req := httptest.NewRequest("POST", "/api/payments/ord-1/refund", strings.NewReader(`{"amount":500,"reason":"requested_by_customer"}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
 	if resp.StatusCode != 202 {
@@ -48,7 +48,7 @@ func TestRefundHandler_EmptyBodyAllowed(t *testing.T) {
 		Return(&service.RefundResult{OrderID: "x", RefundID: "re"}, nil)
 
 	app := newRefundApp(svc)
-	req := httptest.NewRequest("POST", "/api/payments/ORD-1/refund", nil)
+	req := httptest.NewRequest("POST", "/api/payments/ord-1/refund", nil)
 	resp, _ := app.Test(req)
 	if resp.StatusCode != 202 {
 		t.Fatalf("status %d", resp.StatusCode)
@@ -61,7 +61,7 @@ func TestRefundHandler_PropagatesError(t *testing.T) {
 	svc.EXPECT().CreateRefund(gomock.Any(), gomock.Any()).Return(nil, errors.New("stripe down"))
 
 	app := newRefundApp(svc)
-	req := httptest.NewRequest("POST", "/api/payments/ORD-1/refund", nil)
+	req := httptest.NewRequest("POST", "/api/payments/ord-1/refund", nil)
 	resp, _ := app.Test(req)
 	if resp.StatusCode != 500 {
 		t.Fatalf("status %d", resp.StatusCode)

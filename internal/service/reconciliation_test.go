@@ -10,7 +10,7 @@ import (
 )
 
 func TestOrderReconciliation_TickForceConfirms(t *testing.T) {
-	order := &domain.Order{OrderID: "ORD-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1", Status: domain.OrderStatusPending}
+	order := &domain.Order{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1", Status: domain.OrderStatusPending}
 	repo := newOrderStore(t, order)
 	repo.pending = []*domain.Order{order}
 	pub := newEventCapture(t)
@@ -28,7 +28,7 @@ func TestOrderReconciliation_TickForceConfirms(t *testing.T) {
 }
 
 func TestOrderReconciliation_TickIgnoresCryptoOrders(t *testing.T) {
-	order := &domain.Order{OrderID: "ORD-1", MerchantID: "M1", Status: domain.OrderStatusPending} // no PI
+	order := &domain.Order{OrderID: "ord-1", MerchantID: "M1", Status: domain.OrderStatusPending} // no PI
 	repo := newOrderStore(t, order)
 	repo.pending = []*domain.Order{order}
 	r := &orderReconciliation{Orders: repo.mock, Stripe: newWebhookStripe(t, webhookStripeOpts{}), Publisher: newEventCapture(t).mock, BatchSize: 5}
@@ -41,7 +41,7 @@ func TestOrderReconciliation_TickIgnoresCryptoOrders(t *testing.T) {
 }
 
 func TestOrderReconciliation_TickFailsCanceled(t *testing.T) {
-	order := &domain.Order{OrderID: "ORD-1", MerchantID: "M1", StripePaymentIntentID: "pi_x", Status: domain.OrderStatusPending}
+	order := &domain.Order{OrderID: "ord-1", MerchantID: "M1", StripePaymentIntentID: "pi_x", Status: domain.OrderStatusPending}
 	repo := newOrderStore(t, order)
 	repo.pending = []*domain.Order{order}
 	r := &orderReconciliation{Orders: repo.mock, Stripe: newWebhookStripe(t, webhookStripeOpts{piStatus: "canceled"}), Publisher: newEventCapture(t).mock, BatchSize: 5}
@@ -53,7 +53,7 @@ func TestOrderReconciliation_TickFailsCanceled(t *testing.T) {
 
 func TestOrderReconciliation_TickIgnoresGetError(t *testing.T) {
 	// Stripe lookup fails — the loop logs and continues without changing state.
-	order := &domain.Order{OrderID: "ORD-1", MerchantID: "M1", StripePaymentIntentID: "pi_x", Status: domain.OrderStatusPending}
+	order := &domain.Order{OrderID: "ord-1", MerchantID: "M1", StripePaymentIntentID: "pi_x", Status: domain.OrderStatusPending}
 	repo := newOrderStore(t, order)
 	repo.pending = []*domain.Order{order}
 	r := &orderReconciliation{Orders: repo.mock, Stripe: newWebhookStripe(t, webhookStripeOpts{piErr: errors.New("network")}), Publisher: newEventCapture(t).mock, BatchSize: 5}
@@ -93,7 +93,7 @@ func TestOrderReconciliation_RunReturnsOnCancel(t *testing.T) {
 }
 
 func TestOrderReconciliation_RunInvokesTick(t *testing.T) {
-	order := &domain.Order{OrderID: "ORD-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1", Status: domain.OrderStatusPending}
+	order := &domain.Order{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1", Status: domain.OrderStatusPending}
 	repo := newOrderStore(t, order)
 	repo.pending = []*domain.Order{order}
 	pub := newEventCapture(t)

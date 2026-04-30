@@ -51,7 +51,7 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 
 	t.Run("same event.id replayed concurrently", func(t *testing.T) {
 		seed := &domain.Order{
-			OrderID: "ORD-DS-1", MerchantID: "M_WB", TransactionID: "TXN-DS-1",
+			OrderID: "ord-ds-1", MerchantID: "M_WB", TransactionID: "TXN-DS-1",
 			Amount: 1500, Currency: "USD", Status: domain.OrderStatusPending,
 			StripePaymentIntentID: "pi_ds_1",
 		}
@@ -59,7 +59,7 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 			t.Fatalf("seed: %v", err)
 		}
 
-		payload := mustEvent(t, "evt_ds_same", "pi_ds_1", "ORD-DS-1", "payment_intent.succeeded")
+		payload := mustEvent(t, "evt_ds_same", "pi_ds_1", "ord-ds-1", "payment_intent.succeeded")
 		sig := stripe.SignPayload(payload, webhookSecret, time.Now().Unix())
 
 		const workers = 10
@@ -102,7 +102,7 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 
 	t.Run("different event.ids targeting same order converge to paid", func(t *testing.T) {
 		seed := &domain.Order{
-			OrderID: "ORD-DS-2", MerchantID: "M_WB", TransactionID: "TXN-DS-2",
+			OrderID: "ord-ds-2", MerchantID: "M_WB", TransactionID: "TXN-DS-2",
 			Amount: 1500, Currency: "USD", Status: domain.OrderStatusPending,
 			StripePaymentIntentID: "pi_ds_2",
 		}
@@ -120,7 +120,7 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				payload := mustEventWithID(t, i, "pi_ds_2", "ORD-DS-2")
+				payload := mustEventWithID(t, i, "pi_ds_2", "ord-ds-2")
 				sig := stripe.SignPayload(payload, webhookSecret, time.Now().Unix())
 				if err := svc.Process(context.Background(), payload, sig); err != nil {
 					fail.Add(1)

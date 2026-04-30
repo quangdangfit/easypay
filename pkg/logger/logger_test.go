@@ -19,7 +19,7 @@ func TestRequestIDDefaultEmpty(t *testing.T) {
 }
 
 func TestWithMerchantAndOrder(t *testing.T) {
-	ctx := WithMerchantID(WithOrderID(context.Background(), "ORD-1"), "M-1")
+	ctx := WithMerchantID(WithOrderID(context.Background(), "ord-1"), "M-1")
 	// L should not panic and With(ctx) should work.
 	_ = L()
 	if l := With(ctx); l == nil {

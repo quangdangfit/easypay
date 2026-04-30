@@ -36,7 +36,7 @@ func TestPaymentHandler_HappyPath(t *testing.T) {
 	svc.EXPECT().Create(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, in service.CreatePaymentInput) (*service.CreatePaymentResult, error) {
 			captured = in
-			return &service.CreatePaymentResult{OrderID: "ORD-1", Status: "accepted"}, nil
+			return &service.CreatePaymentResult{OrderID: "ord-1", Status: "accepted"}, nil
 		})
 
 	app, _ := newPaymentApp(svc)
@@ -120,7 +120,7 @@ func TestPaymentHandler_QueryMethodPropagated(t *testing.T) {
 	svc.EXPECT().Create(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, in service.CreatePaymentInput) (*service.CreatePaymentResult, error) {
 			captured = in
-			return &service.CreatePaymentResult{OrderID: "ORD-1"}, nil
+			return &service.CreatePaymentResult{OrderID: "ord-1"}, nil
 		})
 
 	app, _ := newPaymentApp(svc)

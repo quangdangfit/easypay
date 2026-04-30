@@ -20,12 +20,12 @@ func receiptOK() *types.Receipt {
 func TestConfirmation_ProcessOne_ConfirmsAndPublishes(t *testing.T) {
 	pendingRepo := newPendingTxStore(t)
 	tx := &domain.PendingTx{
-		TxHash: "0xabc", BlockNumber: 50, OrderID: "ORD-1", ChainID: 1,
+		TxHash: "0xabc", BlockNumber: 50, OrderID: "ord-1", ChainID: 1,
 		RequiredConfirm: 12, Amount: big.NewInt(1500), Status: domain.PendingTxStatusPending,
 	}
 	pendingRepo.byHash[tx.TxHash] = tx
 	chain := &fakeChain{receipts: map[common.Hash]*types.Receipt{common.HexToHash("0xabc"): receiptOK()}}
-	orders := newOrderStore(t, &domain.Order{OrderID: "ORD-1", MerchantID: "M1", Amount: 1500, Status: domain.OrderStatusPending})
+	orders := newOrderStore(t, &domain.Order{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Status: domain.OrderStatusPending})
 	pub := newEventCapture(t)
 	tracker := NewConfirmationTracker(chain, ChainConfig{ChainID: 1, RequiredConfirmations: 12}, pendingRepo.mock, orders.mock, pub.mock)
 	tracker.processOne(context.Background(), tx, 100) // 100-50 = 50 >= 12 confirmations
@@ -33,8 +33,8 @@ func TestConfirmation_ProcessOne_ConfirmsAndPublishes(t *testing.T) {
 	if tx.Status != domain.PendingTxStatusConfirmed {
 		t.Fatalf("status: %s", tx.Status)
 	}
-	if orders.byID["ORD-1"].Status != domain.OrderStatusPaid {
-		t.Fatalf("order: %s", orders.byID["ORD-1"].Status)
+	if orders.byID["ord-1"].Status != domain.OrderStatusPaid {
+		t.Fatalf("order: %s", orders.byID["ord-1"].Status)
 	}
 	if len(pub.confirmed) != 1 {
 		t.Fatalf("confirmations: %d", len(pub.confirmed))
@@ -86,12 +86,12 @@ func TestConfirmation_ProcessOne_NotEnoughConfirmations(t *testing.T) {
 func TestConfirmation_ProcessOne_AmountMismatch(t *testing.T) {
 	pendingRepo := newPendingTxStore(t)
 	tx := &domain.PendingTx{
-		TxHash: "0xabc", BlockNumber: 50, RequiredConfirm: 12, OrderID: "ORD-1",
+		TxHash: "0xabc", BlockNumber: 50, RequiredConfirm: 12, OrderID: "ord-1",
 		Amount: big.NewInt(999), Status: domain.PendingTxStatusPending,
 	}
 	pendingRepo.byHash[tx.TxHash] = tx
 	chain := &fakeChain{receipts: map[common.Hash]*types.Receipt{common.HexToHash("0xabc"): receiptOK()}}
-	orders := newOrderStore(t, &domain.Order{OrderID: "ORD-1", Amount: 1500, Status: domain.OrderStatusPending})
+	orders := newOrderStore(t, &domain.Order{OrderID: "ord-1", Amount: 1500, Status: domain.OrderStatusPending})
 	tracker := NewConfirmationTracker(chain, ChainConfig{}, pendingRepo.mock, orders.mock, newEventCapture(t).mock)
 	tracker.processOne(context.Background(), tx, 100)
 	if tx.Status != domain.PendingTxStatusFailed {
@@ -102,12 +102,12 @@ func TestConfirmation_ProcessOne_AmountMismatch(t *testing.T) {
 func TestConfirmation_ProcessOne_AlreadyFinalised(t *testing.T) {
 	pendingRepo := newPendingTxStore(t)
 	tx := &domain.PendingTx{
-		TxHash: "0xabc", BlockNumber: 50, RequiredConfirm: 12, OrderID: "ORD-1",
+		TxHash: "0xabc", BlockNumber: 50, RequiredConfirm: 12, OrderID: "ord-1",
 		Amount: big.NewInt(1500), Status: domain.PendingTxStatusPending,
 	}
 	pendingRepo.byHash[tx.TxHash] = tx
 	chain := &fakeChain{receipts: map[common.Hash]*types.Receipt{common.HexToHash("0xabc"): receiptOK()}}
-	orders := newOrderStore(t, &domain.Order{OrderID: "ORD-1", Amount: 1500, Status: domain.OrderStatusPaid})
+	orders := newOrderStore(t, &domain.Order{OrderID: "ord-1", Amount: 1500, Status: domain.OrderStatusPaid})
 	pub := newEventCapture(t)
 	tracker := NewConfirmationTracker(chain, ChainConfig{}, pendingRepo.mock, orders.mock, pub.mock)
 	tracker.processOne(context.Background(), tx, 100)

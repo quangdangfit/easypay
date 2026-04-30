@@ -61,8 +61,8 @@ func TestRealClient_CreateCheckoutSession(t *testing.T) {
 		CustomerEmail:      "user@example.com",
 		SuccessURL:         "https://m/success",
 		CancelURL:          "https://m/cancel",
-		ClientReferenceID:  "ORD-1",
-		Metadata:           map[string]string{"order_id": "ORD-1"},
+		ClientReferenceID:  "ord-1",
+		Metadata:           map[string]string{"order_id": "ord-1"},
 	}, "idem-1")
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -108,7 +108,7 @@ func TestRealClient_CreatePaymentIntent(t *testing.T) {
 		"amount": 2000,
 		"currency": "usd",
 		"status": "requires_payment_method",
-		"metadata": {"order_id": "ORD-2"}
+		"metadata": {"order_id": "ord-2"}
 	}`)
 	defer ts.Close()
 	c, restore := withStubBackend(t, ts)
@@ -120,7 +120,7 @@ func TestRealClient_CreatePaymentIntent(t *testing.T) {
 		PaymentMethodTypes: []string{"card"},
 		CustomerEmail:      "user@example.com",
 		Description:        "test order",
-		Metadata:           map[string]string{"order_id": "ORD-2"},
+		Metadata:           map[string]string{"order_id": "ord-2"},
 	}, "idem-2")
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -131,7 +131,7 @@ func TestRealClient_CreatePaymentIntent(t *testing.T) {
 	if out.Status != "requires_payment_method" {
 		t.Errorf("Status=%q", out.Status)
 	}
-	if out.Metadata["order_id"] != "ORD-2" {
+	if out.Metadata["order_id"] != "ord-2" {
 		t.Errorf("metadata: %v", out.Metadata)
 	}
 }
@@ -240,7 +240,7 @@ func TestRealClient_CreateRefund(t *testing.T) {
 		PaymentIntentID: "pi_5",
 		Amount:          500,
 		Reason:          "requested_by_customer",
-		Metadata:        map[string]string{"order_id": "ORD-5"},
+		Metadata:        map[string]string{"order_id": "ord-5"},
 	}, "idem-5")
 	if err != nil {
 		t.Fatalf("err: %v", err)

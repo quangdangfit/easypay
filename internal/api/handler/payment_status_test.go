@@ -27,11 +27,11 @@ func newStatusApp(repo repository.OrderRepository, merchantID string) *fiber.App
 func TestPaymentStatus_HappyPath(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repo := repomock.NewMockOrderRepository(ctrl)
-	repo.EXPECT().GetByOrderID(gomock.Any(), "ORD-1").
-		Return(&domain.Order{OrderID: "ORD-1", MerchantID: "M1", Amount: 1500, Currency: "USD", Status: domain.OrderStatusPaid}, nil)
+	repo.EXPECT().GetByOrderID(gomock.Any(), "ord-1").
+		Return(&domain.Order{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", Status: domain.OrderStatusPaid}, nil)
 
 	app := newStatusApp(repo, "M1")
-	resp, err := app.Test(httptest.NewRequest("GET", "/api/payments/ORD-1", nil))
+	resp, err := app.Test(httptest.NewRequest("GET", "/api/payments/ord-1", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,10 +56,10 @@ func TestPaymentStatus_OtherMerchantHidden(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repo := repomock.NewMockOrderRepository(ctrl)
 	repo.EXPECT().GetByOrderID(gomock.Any(), gomock.Any()).
-		Return(&domain.Order{OrderID: "ORD-1", MerchantID: "M2"}, nil)
+		Return(&domain.Order{OrderID: "ord-1", MerchantID: "M2"}, nil)
 
 	app := newStatusApp(repo, "M1")
-	resp, _ := app.Test(httptest.NewRequest("GET", "/api/payments/ORD-1", nil))
+	resp, _ := app.Test(httptest.NewRequest("GET", "/api/payments/ord-1", nil))
 	if resp.StatusCode != 404 {
 		t.Fatalf("status %d", resp.StatusCode)
 	}

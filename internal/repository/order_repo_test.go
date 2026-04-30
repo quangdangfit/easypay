@@ -27,12 +27,12 @@ func TestOrderRepo_Create(t *testing.T) {
 	db, mock := newMockDB(t)
 	repo := NewOrderRepository(db)
 	mock.ExpectExec("INSERT INTO orders").
-		WithArgs("ORD-1", "M1", "TXN-1", int64(1500), "USD", "pending",
+		WithArgs("ord-1", "M1", "TXN-1", int64(1500), "USD", "pending",
 			nil, nil, nil, nil, nil, nil).
 		WillReturnResult(sqlmock.NewResult(7, 1))
 
 	o := &domain.Order{
-		OrderID: "ORD-1", MerchantID: "M1", TransactionID: "TXN-1",
+		OrderID: "ord-1", MerchantID: "M1", TransactionID: "TXN-1",
 		Amount: 1500, Currency: "USD", Status: domain.OrderStatusPending,
 	}
 	if err := repo.Create(context.Background(), o); err != nil {
@@ -63,7 +63,7 @@ func orderRow() *sqlmock.Rows {
 		"stripe_payment_intent_id", "stripe_charge_id", "checkout_url",
 		"callback_url", "created_at", "updated_at",
 	}).AddRow(
-		int64(1), "ORD-1", "M1", "TXN-1", int64(1500),
+		int64(1), "ord-1", "M1", "TXN-1", int64(1500),
 		"USD", "paid", "card", "cs_x",
 		"pi_x", "ch_x", "https://x",
 		"https://cb", time.Now(), time.Now(),
@@ -74,14 +74,14 @@ func TestOrderRepo_GetByOrderID(t *testing.T) {
 	db, mock := newMockDB(t)
 	repo := NewOrderRepository(db)
 	mock.ExpectQuery("SELECT.*FROM orders WHERE order_id").
-		WithArgs("ORD-1").
+		WithArgs("ord-1").
 		WillReturnRows(orderRow())
 
-	o, err := repo.GetByOrderID(context.Background(), "ORD-1")
+	o, err := repo.GetByOrderID(context.Background(), "ord-1")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if o.OrderID != "ORD-1" || o.Status != domain.OrderStatusPaid {
+	if o.OrderID != "ord-1" || o.Status != domain.OrderStatusPaid {
 		t.Fatalf("got: %+v", o)
 	}
 }
@@ -116,10 +116,10 @@ func TestOrderRepo_UpdateStatus(t *testing.T) {
 	db, mock := newMockDB(t)
 	repo := NewOrderRepository(db)
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE orders")).
-		WithArgs("paid", "pi_x", "ORD-1").
+		WithArgs("paid", "pi_x", "ord-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	if err := repo.UpdateStatus(context.Background(), "ORD-1", domain.OrderStatusPaid, "pi_x"); err != nil {
+	if err := repo.UpdateStatus(context.Background(), "ord-1", domain.OrderStatusPaid, "pi_x"); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 }
@@ -140,10 +140,10 @@ func TestOrderRepo_UpdateCheckout(t *testing.T) {
 	db, mock := newMockDB(t)
 	repo := NewOrderRepository(db)
 	mock.ExpectExec("UPDATE orders SET").
-		WithArgs("cs_x", "pi_x", "https://x", "ORD-1").
+		WithArgs("cs_x", "pi_x", "https://x", "ord-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	if err := repo.UpdateCheckout(context.Background(), "ORD-1", "cs_x", "pi_x", "https://x"); err != nil {
+	if err := repo.UpdateCheckout(context.Background(), "ord-1", "cs_x", "pi_x", "https://x"); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 }
@@ -174,8 +174,8 @@ func TestOrderRepo_BatchCreate(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 2))
 
 	orders := []*domain.Order{
-		{OrderID: "ORD-1", MerchantID: "M1", TransactionID: "TXN-1", Amount: 100, Currency: "USD", Status: domain.OrderStatusPending},
-		{OrderID: "ORD-2", MerchantID: "M1", TransactionID: "TXN-2", Amount: 200, Currency: "USD", Status: domain.OrderStatusPending},
+		{OrderID: "ord-1", MerchantID: "M1", TransactionID: "TXN-1", Amount: 100, Currency: "USD", Status: domain.OrderStatusPending},
+		{OrderID: "ord-2", MerchantID: "M1", TransactionID: "TXN-2", Amount: 200, Currency: "USD", Status: domain.OrderStatusPending},
 	}
 	if err := repo.BatchCreate(context.Background(), orders); err != nil {
 		t.Fatalf("batch: %v", err)
@@ -187,7 +187,7 @@ func TestOrderRepo_BatchCreate_Error(t *testing.T) {
 	repo := NewOrderRepository(db)
 	mock.ExpectExec("INSERT INTO orders").WillReturnError(errors.New("dup"))
 	err := repo.BatchCreate(context.Background(), []*domain.Order{
-		{OrderID: "ORD-1", MerchantID: "M1", TransactionID: "TXN-1", Amount: 1, Currency: "USD", Status: domain.OrderStatusPending},
+		{OrderID: "ord-1", MerchantID: "M1", TransactionID: "TXN-1", Amount: 1, Currency: "USD", Status: domain.OrderStatusPending},
 	})
 	if err == nil {
 		t.Fatal("expected error")

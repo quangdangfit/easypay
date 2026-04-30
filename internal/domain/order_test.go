@@ -9,7 +9,7 @@ import (
 func TestPendingTxAndMerchantSmoke(t *testing.T) {
 	// Coverage smoke for fields — ensures struct literals compile and round-trip.
 	tx := PendingTx{
-		ID: 1, TxHash: "0x", BlockNumber: 1, OrderID: "ORD-1",
+		ID: 1, TxHash: "0x", BlockNumber: 1, OrderID: "ord-1",
 		Amount: big.NewInt(1), ChainID: 1, Confirmations: 1, RequiredConfirm: 12,
 		Status: PendingTxStatusPending, CreatedAt: time.Now(),
 	}
@@ -17,7 +17,7 @@ func TestPendingTxAndMerchantSmoke(t *testing.T) {
 		ID: 1, MerchantID: "M1", APIKey: "k", SecretKey: "s",
 		RateLimit: 1000, Status: MerchantStatusActive,
 	}
-	if tx.OrderID != "ORD-1" || m.MerchantID != "M1" {
+	if tx.OrderID != "ord-1" || m.MerchantID != "M1" {
 		t.Fatal("smoke")
 	}
 }

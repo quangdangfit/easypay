@@ -174,9 +174,9 @@ Response:
 ```json
 {
   "data": {
-    "order_id": "ORD-abc...",
+    "order_id": "ord-abc...",
     "transaction_id": "TXN-1",
-    "checkout_url": "http://localhost:8080/pay/ORD-abc...?t=1716000000.5a3f...",
+    "checkout_url": "http://localhost:8080/pay/ord-abc...?t=1716000000.5a3f...",
     "status": "accepted"
   }
 }

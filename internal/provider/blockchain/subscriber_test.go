@@ -14,7 +14,7 @@ import (
 )
 
 func sampleLog() types.Log {
-	orderHex := common.LeftPadBytes([]byte("ORD-1"), 32)
+	orderHex := common.LeftPadBytes([]byte("ord-1"), 32)
 	payer := common.HexToAddress("0xdEAD000000000000000000000000000000000001")
 	token := common.HexToAddress("0xC0FFEE0000000000000000000000000000000002")
 	data := make([]byte, 64)

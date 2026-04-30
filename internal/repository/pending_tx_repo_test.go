@@ -18,7 +18,7 @@ func ptxRow() *sqlmock.Rows {
 		"id", "tx_hash", "block_number", "order_id", "payer", "token",
 		"amount", "chain_id", "confirmations", "required_confirm", "status",
 		"created_at",
-	}).AddRow(int64(1), "0xabc", uint64(100), "ORD-1", "0xdead", "0xbeef",
+	}).AddRow(int64(1), "0xabc", uint64(100), "ord-1", "0xdead", "0xbeef",
 		"123", int64(11155111), uint64(3), uint64(12), "pending", time.Now())
 }
 
@@ -29,7 +29,7 @@ func TestPendingTxRepo_Create(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(5, 1))
 
 	tx := &domain.PendingTx{
-		TxHash: "0xabc", BlockNumber: 100, OrderID: "ORD-1",
+		TxHash: "0xabc", BlockNumber: 100, OrderID: "ord-1",
 		ChainID: 1, RequiredConfirm: 12, Status: domain.PendingTxStatusPending,
 		Amount: big.NewInt(99),
 	}
@@ -69,7 +69,7 @@ func TestPendingTxRepo_GetByTxHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tx.OrderID != "ORD-1" || tx.Amount.String() != "123" {
+	if tx.OrderID != "ord-1" || tx.Amount.String() != "123" {
 		t.Fatalf("got: %+v", tx)
 	}
 }

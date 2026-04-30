@@ -37,8 +37,8 @@ func TestPaymentConsumer_BatchHappyPath(t *testing.T) {
 
 	c := NewPaymentConsumer(repo)
 	msgs := []kafkago.Message{
-		mustEvent(t, "ORD-1", "M1", "TXN-1"),
-		mustEvent(t, "ORD-2", "M1", "TXN-2"),
+		mustEvent(t, "ord-1", "M1", "TXN-1"),
+		mustEvent(t, "ord-2", "M1", "TXN-2"),
 	}
 	if err := c.Handle(context.Background(), msgs); err != nil {
 		t.Fatalf("handle: %v", err)
@@ -52,10 +52,10 @@ func TestPaymentConsumer_HandleOneTreatsDuplicateAsSuccess(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repo := repomock.NewMockOrderRepository(ctrl)
 	repo.EXPECT().Create(gomock.Any(), gomock.Any()).
-		Return(errors.New("Error 1062: Duplicate entry 'ORD-1' for key 'order_id'"))
+		Return(errors.New("Error 1062: Duplicate entry 'ord-1' for key 'order_id'"))
 
 	c := NewPaymentConsumer(repo)
-	if err := c.HandleOne(context.Background(), mustEvent(t, "ORD-1", "M1", "TXN-1")); err != nil {
+	if err := c.HandleOne(context.Background(), mustEvent(t, "ord-1", "M1", "TXN-1")); err != nil {
 		t.Fatalf("expected nil for duplicate, got %v", err)
 	}
 }
