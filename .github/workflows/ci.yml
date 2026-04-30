@@ -55,7 +55,7 @@ jobs:
   # Each emits its own coverage profile and uploads under a distinct
   # Codecov flag — Codecov merges them into a combined report.
   test:
-    name: Unit tests + coverage
+    name: Unit Tests
     needs: lint
     runs-on: ubuntu-latest
     steps:
@@ -78,7 +78,7 @@ jobs:
           fail_ci_if_error: false
 
   integration:
-    name: Integration tests + coverage
+    name: Integration Tests
     needs: lint
     runs-on: ubuntu-latest
     # Integration tests bring up MySQL + Redis + Kafka in real containers via
