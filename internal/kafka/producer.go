@@ -49,7 +49,6 @@ type EventPublisher interface {
 type publisher struct {
 	events    *kafka.Writer
 	confirmed *kafka.Writer
-	dlq       *kafka.Writer
 }
 
 func NewPublisher(cfg config.KafkaConfig) EventPublisher {
@@ -57,6 +56,7 @@ func NewPublisher(cfg config.KafkaConfig) EventPublisher {
 	// `confluent-local` image used in CI) ship with `auto.create.topics.enable`
 	// disabled, so writing to a non-existent topic returns
 	// "Unknown Topic Or Partition" before the writer's auto-create kicks in.
+	// DLQ is included so the consumer's DLQ writer doesn't hit the same race.
 	ensureTopics(cfg.Brokers, cfg.TopicEvents, cfg.TopicConfirmed, cfg.TopicDLQ)
 
 	common := func(topic string) *kafka.Writer {
@@ -74,7 +74,6 @@ func NewPublisher(cfg config.KafkaConfig) EventPublisher {
 	return &publisher{
 		events:    common(cfg.TopicEvents),
 		confirmed: common(cfg.TopicConfirmed),
-		dlq:       common(cfg.TopicDLQ),
 	}
 }
 
@@ -141,7 +140,7 @@ func (p *publisher) PublishPaymentConfirmed(ctx context.Context, e PaymentConfir
 
 func (p *publisher) Close() error {
 	var first error
-	for _, w := range []*kafka.Writer{p.events, p.confirmed, p.dlq} {
+	for _, w := range []*kafka.Writer{p.events, p.confirmed} {
 		if w == nil {
 			continue
 		}
@@ -152,8 +151,8 @@ func (p *publisher) Close() error {
 	return first
 }
 
-// PingableWriter exposes a tiny ping for /readyz by issuing a metadata
-// fetch via DialContext to one broker.
+// Pinger exposes a tiny ping for /readyz by issuing a metadata fetch via
+// DialContext to one broker.
 type Pinger struct {
 	Brokers []string
 }

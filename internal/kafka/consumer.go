@@ -136,22 +136,15 @@ func (c *BatchConsumer) commit(ctx context.Context, msgs []kafka.Message) error 
 }
 
 func (c *BatchConsumer) toDLQ(ctx context.Context, m kafka.Message, cause error) {
-	wrap := struct {
-		Topic     string `json:"topic"`
-		Partition int    `json:"partition"`
-		Offset    int64  `json:"offset"`
-		Error     string `json:"error"`
-		Key       string `json:"key"`
-		Value     []byte `json:"value"`
-	}{m.Topic, m.Partition, m.Offset, cause.Error(), string(m.Key), m.Value}
-	b, _ := json.Marshal(wrap)
+	b, _ := MarshalForDLQ(m, cause)
 	if err := c.dlq.WriteMessages(ctx, kafka.Message{Key: m.Key, Value: b}); err != nil {
 		logger.L().Error("dlq write failed", "err", err, "offset", m.Offset)
 	}
 }
 
-// MarshalForDLQ is a helper exposed for handlers that need to format DLQ payloads
-// the same way the consumer does.
+// MarshalForDLQ formats a failed message + cause into the canonical DLQ
+// payload shape. Used by the consumer's per-message fallback and exposed
+// for handlers that need to produce the same envelope.
 func MarshalForDLQ(m kafka.Message, cause error) ([]byte, error) {
 	w := struct {
 		Topic     string `json:"topic"`
