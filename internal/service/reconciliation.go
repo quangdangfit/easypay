@@ -28,13 +28,35 @@ type orderReconciliation struct {
 	BatchSize  int
 }
 
+// ReconciliationOptions tunes the reconciler loop. Zero values fall back to
+// the production defaults (5m / 10m / 500).
+type ReconciliationOptions struct {
+	Interval   time.Duration
+	StuckAfter time.Duration
+	BatchSize  int
+}
+
 func NewOrderReconciliation(orders repository.OrderRepository, s stripe.Client, p kafka.EventPublisher) Reconciler {
-	return &orderReconciliation{
+	return NewOrderReconciliationWithOptions(orders, s, p, ReconciliationOptions{})
+}
+
+func NewOrderReconciliationWithOptions(orders repository.OrderRepository, s stripe.Client, p kafka.EventPublisher, opts ReconciliationOptions) Reconciler {
+	r := &orderReconciliation{
 		Orders: orders, Stripe: s, Publisher: p,
-		Interval:   5 * time.Minute,
-		StuckAfter: 10 * time.Minute,
-		BatchSize:  500,
+		Interval:   opts.Interval,
+		StuckAfter: opts.StuckAfter,
+		BatchSize:  opts.BatchSize,
 	}
+	if r.Interval == 0 {
+		r.Interval = 5 * time.Minute
+	}
+	if r.StuckAfter == 0 {
+		r.StuckAfter = 10 * time.Minute
+	}
+	if r.BatchSize == 0 {
+		r.BatchSize = 500
+	}
+	return r
 }
 
 func (r *orderReconciliation) Run(ctx context.Context) error {
