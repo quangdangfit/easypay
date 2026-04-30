@@ -51,6 +51,9 @@ jobs:
           version: v2.11.4
           args: --timeout=5m
 
+  # test and integration both fan out from lint and run in parallel.
+  # Each emits its own coverage profile and uploads under a distinct
+  # Codecov flag — Codecov merges them into a combined report.
   test:
     name: Unit tests + coverage
     needs: lint
@@ -75,8 +78,8 @@ jobs:
           fail_ci_if_error: false
 
   integration:
-    name: Integration tests
-    needs: test
+    name: Integration tests + coverage
+    needs: lint
     runs-on: ubuntu-latest
     # Integration tests bring up MySQL + Redis + Kafka in real containers via
     # testcontainers-go inside the test process. The GitHub-hosted runner
@@ -101,7 +104,12 @@ jobs:
           wait
 
       - name: Run integration tests
-        env:
-          EASYPAY_INTEGRATION: '1'
-        run: |
-          go test -tags integration -timeout 600s -count=1 ./integration_test/...
+        run: make inttest
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage-integration.out
+          flags: integration
+          fail_ci_if_error: false

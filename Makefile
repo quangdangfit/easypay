@@ -5,7 +5,7 @@ BIN_DIR  := bin
 PKG      := github.com/quangdangfit/easypay
 LDFLAGS  := -s -w
 
-.PHONY: help run build tidy lint test unittest test-integration migrate up down logs clean bench mocks
+.PHONY: help run build tidy lint test unittest test-integration inttest migrate up down logs clean bench mocks
 
 # Packages to count toward coverage (everything user-written, excluding
 # main entry points, integration tests, generated mocks, and the bench tool).
@@ -20,6 +20,7 @@ help:
 	@echo "  test              - unit tests with -race"
 	@echo "  unittest          - unit tests with coverage profile (CI target)"
 	@echo "  test-integration  - integration tests (needs Docker)"
+	@echo "  inttest           - integration tests with coverage profile (CI target)"
 	@echo "  bench             - run bench harness (50 workers x 1000 req)"
 	@echo "  mocks             - regenerate gomock mocks (go.uber.org/mock)"
 	@echo "  migrate           - apply SQL migrations"
@@ -51,6 +52,13 @@ unittest:
 
 test-integration:
 	EASYPAY_INTEGRATION=1 go test -tags integration ./integration_test/... -v -count=1 -timeout 600s
+
+# inttest runs the integration suite with coverage attributed back to the
+# same SOURCE_PKGS as unittest, so Codecov can merge the two profiles.
+inttest:
+	EASYPAY_INTEGRATION=1 go test -tags integration -timeout 600s -count=1 -coverprofile=coverage-integration.out -coverpkg=$(SOURCE_PKGS) ./integration_test/...
+	@echo
+	@go tool cover -func=coverage-integration.out | tail -n 5
 
 mocks:
 	@command -v mockgen >/dev/null 2>&1 || { echo "Install: go install go.uber.org/mock/mockgen@latest"; exit 1; }
