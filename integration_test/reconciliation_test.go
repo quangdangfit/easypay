@@ -71,37 +71,10 @@ func TestReconciliationCron(t *testing.T) {
 		},
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	done := make(chan struct{})
-	go func() {
-		_ = reconciler.Run(ctx)
-		close(done)
-	}()
-
-	// Poll until the order flips to 'paid' (the reconciler's first tick fires
-	// after Interval, so this should happen within ~500ms).
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		o, err := orderRepo.GetByOrderID(context.Background(), stuck.OrderID)
-		if err == nil && o.Status == domain.OrderStatusPaid {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	cancel()
-	<-done
-
-	o, err := orderRepo.GetByOrderID(context.Background(), stuck.OrderID)
-	if err != nil {
-		t.Fatalf("read order: %v", err)
-	}
-	if o.Status != domain.OrderStatusPaid {
-		t.Fatalf("status: got %s want paid", o.Status)
-	}
-
-	// Verify a payment.confirmed event was published.
+	// Set up the reader BEFORE starting the reconciler so we don't miss the
+	// publish, and so we don't have to worry about the publish racing with
+	// our cancel — the publish call uses the reconciler's ctx, and on slow CI
+	// Kafka the cancel can land before WriteMessages returns.
 	reader := kafkago.NewReader(kafkago.ReaderConfig{
 		Brokers:   env.KafkaBrokers,
 		Topic:     kafkaCfg.TopicConfirmed,
@@ -115,21 +88,45 @@ func TestReconciliationCron(t *testing.T) {
 		t.Fatalf("set offset: %v", err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		_ = reconciler.Run(ctx)
+		close(done)
+	}()
+
+	// Read until we see our event. The reconciler publishes AFTER UpdateStatus
+	// succeeds, so by the time the event lands the order must already be paid.
+	// Keep the reconciler running until then — cancelling early can interrupt
+	// the in-flight publish on slow CI brokers.
 	found := false
-	deadline = time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(20 * time.Second)
 	for !found && time.Now().Before(deadline) {
-		rctx, rcancel := context.WithTimeout(context.Background(), 2*time.Second)
+		rctx, rcancel := context.WithTimeout(ctx, 2*time.Second)
 		m, err := reader.ReadMessage(rctx)
 		rcancel()
 		if err != nil {
-			break
+			continue
 		}
 		var ev kafka.PaymentConfirmedEvent
 		if json.Unmarshal(m.Value, &ev) == nil && ev.OrderID == stuck.OrderID {
 			found = true
 		}
 	}
+	cancel()
+	<-done
+
 	if !found {
 		t.Fatal("payment.confirmed event for reconciled order not found")
+	}
+
+	o, err := orderRepo.GetByOrderID(context.Background(), stuck.OrderID)
+	if err != nil {
+		t.Fatalf("read order: %v", err)
+	}
+	if o.Status != domain.OrderStatusPaid {
+		t.Fatalf("status: got %s want paid", o.Status)
 	}
 }
