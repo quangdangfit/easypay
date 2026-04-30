@@ -59,7 +59,7 @@ subscribes to `PaymentReceived` events).
 
 | Layer | Tech |
 |---|---|
-| Language | Go 1.22+ |
+| Language | Go 1.25+ |
 | HTTP | Fiber |
 | DB | MySQL 8 (sharded by `merchant_id`) |
 | Cache / lock / rate-limit | Redis 7 (RedisStack for Bloom) |

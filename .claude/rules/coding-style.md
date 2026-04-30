@@ -1,7 +1,7 @@
 # Go Code Style
 
 ## General
-- Go 1.22+ required. Use new loop variable scoping (no need for `v := v` in goroutines).
+- Go 1.25+ required. Use new loop variable scoping (no need for `v := v` in goroutines).
 - Use `context.Context` as first parameter in every function that does I/O.
 - Use `slog` for structured logging. Every log line includes: `request_id`, `merchant_id`, `order_id` where available.
 - All monetary amounts are `int64` in smallest currency unit (IDR has no decimals, so 150000 IDR = `150000`).

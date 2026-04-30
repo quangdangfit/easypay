@@ -7,7 +7,7 @@ A checklist for building the global payment gateway monolith (Stripe + blockchai
 ## Phase 0 — Project Bootstrap
 
 - [x] Initialize Go module: `go mod init github.com/quangdangfit/easypay`
-- [x] Set Go version to 1.22+ in `go.mod`
+- [x] Set Go version to 1.25+ in `go.mod`
 - [x] Create top-level directory skeleton: `cmd/`, `internal/`, `pkg/`, `migrations/`, `integration_test/`
 - [x] Add `Makefile` with targets: `run`, `build`, `test`, `test-integration`, `migrate`, `lint`
 - [x] Add `Dockerfile` (multi-stage Go build, distroless final image)

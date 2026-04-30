@@ -19,7 +19,7 @@ Check for these critical problems:
 **Concurrency**
 - [ ] Goroutine leaks: every goroutine has exit path via context?
 - [ ] Shared state protected by mutex or channel?
-- [ ] Loop variable capture fixed (Go 1.22+ or explicit copy)?
+- [ ] Loop variable capture fixed (Go 1.25+ or explicit copy)?
 
 **Performance**
 - [ ] Redis before DB (short-circuit expensive operations)?

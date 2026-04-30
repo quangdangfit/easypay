@@ -21,7 +21,7 @@ Single Go binary with internal packages. NOT microservices. All communication is
 
 | Layer | Technology | Purpose |
 |-------|----------|---------|
-| Language | Go 1.22+ | Primary language, all code |
+| Language | Go 1.25+ | Primary language, all code |
 | HTTP framework | Fiber | REST API, webhook handler |
 | Database | MySQL 8 | Primary datastore, sharded by merchant_id |
 | Cache | Redis 7 | Idempotency, Bloom filter, rate limiting, distributed locks |
