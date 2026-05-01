@@ -16,6 +16,7 @@ var ErrNotFound = errors.New("order not found")
 type OrderRepository interface {
 	Create(ctx context.Context, order *domain.Order) error
 	GetByOrderID(ctx context.Context, orderID string) (*domain.Order, error)
+	GetByMerchantTransaction(ctx context.Context, merchantID, transactionID string) (*domain.Order, error)
 	GetByPaymentIntentID(ctx context.Context, pi string) (*domain.Order, error)
 	UpdateStatus(ctx context.Context, orderID string, status domain.OrderStatus, stripePaymentIntentID string) error
 	UpdateCheckout(ctx context.Context, orderID, stripeSessionID, stripePaymentIntentID, checkoutURL string) error
@@ -57,6 +58,16 @@ func (r *orderRepo) Create(ctx context.Context, o *domain.Order) error {
 func (r *orderRepo) GetByOrderID(ctx context.Context, orderID string) (*domain.Order, error) {
 	q := `SELECT ` + orderCols + ` FROM orders WHERE order_id = ? LIMIT 1`
 	row := r.db.QueryRowContext(ctx, q, orderID)
+	return scanOrder(row)
+}
+
+// GetByMerchantTransaction is the long-tail idempotency lookup: when the
+// Redis idem cache has expired (TTL 24h) but the merchant resends the same
+// transaction_id, we must still return the existing order rather than
+// creating a duplicate. Backed by uniq_merchant_txn (migration 002).
+func (r *orderRepo) GetByMerchantTransaction(ctx context.Context, merchantID, txnID string) (*domain.Order, error) {
+	q := `SELECT ` + orderCols + ` FROM orders WHERE merchant_id = ? AND transaction_id = ? LIMIT 1`
+	row := r.db.QueryRowContext(ctx, q, merchantID, txnID)
 	return scanOrder(row)
 }
 

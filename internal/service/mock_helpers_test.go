@@ -46,6 +46,15 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 			}
 			return nil, repository.ErrNotFound
 		}).AnyTimes()
+	s.mock.EXPECT().GetByMerchantTransaction(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, merchantID, txnID string) (*domain.Order, error) {
+			for _, o := range s.byID {
+				if o.MerchantID == merchantID && o.TransactionID == txnID {
+					return o, nil
+				}
+			}
+			return nil, repository.ErrNotFound
+		}).AnyTimes()
 	s.mock.EXPECT().GetByPaymentIntentID(gomock.Any(), gomock.Any()).
 		Return(nil, repository.ErrNotFound).AnyTimes()
 	s.mock.EXPECT().UpdateStatus(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).

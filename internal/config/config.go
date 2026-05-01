@@ -42,6 +42,13 @@ type AppConfig struct {
 	// these for `mode=payment` Checkout Sessions.
 	CheckoutDefaultSuccessURL string
 	CheckoutDefaultCancelURL  string
+	// OrderIDSecret derives order_id deterministically as
+	// HMAC-SHA256(secret, "<merchant_id>:<transaction_id>"). Concurrent
+	// Create calls for the same idempotency key collapse to the same
+	// order_id, so Redis SETNX, Stripe's Idempotency-Key, and the MySQL
+	// uniq_merchant_txn index all dedupe along the same identity. When
+	// empty, falls back to random UUIDs (legacy behaviour, races possible).
+	OrderIDSecret string
 }
 
 type DBConfig struct {
@@ -106,6 +113,7 @@ func Load() (*Config, error) {
 			StripeRateLimit:           getenvInt("STRIPE_RATE_LIMIT", 80),
 			CheckoutDefaultSuccessURL: getenv("CHECKOUT_DEFAULT_SUCCESS_URL", publicBase+"/checkout/success"),
 			CheckoutDefaultCancelURL:  getenv("CHECKOUT_DEFAULT_CANCEL_URL", publicBase+"/checkout/cancel"),
+			OrderIDSecret:             getenv("ORDER_ID_SECRET", ""),
 		},
 		DB: DBConfig{
 			DSN:          mustGetenv("DB_DSN"),

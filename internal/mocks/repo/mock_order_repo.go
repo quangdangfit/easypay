@@ -85,6 +85,21 @@ func (mr *MockOrderRepositoryMockRecorder) GetByOrderID(ctx, orderID any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByOrderID", reflect.TypeOf((*MockOrderRepository)(nil).GetByOrderID), ctx, orderID)
 }
 
+// GetByMerchantTransaction mocks base method.
+func (m *MockOrderRepository) GetByMerchantTransaction(ctx context.Context, merchantID, transactionID string) (*domain.Order, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetByMerchantTransaction", ctx, merchantID, transactionID)
+	ret0, _ := ret[0].(*domain.Order)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetByMerchantTransaction indicates an expected call of GetByMerchantTransaction.
+func (mr *MockOrderRepositoryMockRecorder) GetByMerchantTransaction(ctx, merchantID, transactionID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByMerchantTransaction", reflect.TypeOf((*MockOrderRepository)(nil).GetByMerchantTransaction), ctx, merchantID, transactionID)
+}
+
 // GetByPaymentIntentID mocks base method.
 func (m *MockOrderRepository) GetByPaymentIntentID(ctx context.Context, pi string) (*domain.Order, error) {
 	m.ctrl.T.Helper()

@@ -13,6 +13,7 @@ import (
 	"github.com/quangdangfit/easypay/internal/domain"
 	"github.com/quangdangfit/easypay/internal/kafka"
 	"github.com/quangdangfit/easypay/internal/repository"
+	"github.com/quangdangfit/easypay/pkg/logger"
 )
 
 // PaymentConsumer batches PaymentEvent messages from payment.events into MySQL
@@ -52,9 +53,28 @@ func (p *PaymentConsumer) HandleOne(ctx context.Context, m kafkago.Message) erro
 	c, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := p.repo.Create(c, o); err != nil {
-		// Treat unique-key conflicts as success (already inserted by a retry).
+		// Unique-key conflict means a row with the same (merchant_id,
+		// transaction_id) already exists. Two flavours:
+		//   1. Same order_id → benign at-least-once redelivery; ack and move on.
+		//   2. Different order_id → conflicting events for the same idem key
+		//      (a service-layer race produced two Kafka messages). Bubble it
+		//      up so the batch consumer DLQs the loser and ops can audit.
 		if isDuplicateError(err) {
-			return nil
+			existing, getErr := p.repo.GetByMerchantTransaction(c, o.MerchantID, o.TransactionID)
+			if getErr == nil && existing != nil && existing.OrderID == o.OrderID {
+				logger.L().Info("payment_consumer: benign duplicate, row already present",
+					"order_id", o.OrderID, "merchant_id", o.MerchantID)
+				return nil
+			}
+			haveID := ""
+			if existing != nil {
+				haveID = existing.OrderID
+			}
+			logger.L().Error("payment_consumer: conflicting order_ids for same (merchant,txn)",
+				"incoming_order_id", o.OrderID, "stored_order_id", haveID,
+				"merchant_id", o.MerchantID, "transaction_id", o.TransactionID)
+			return fmt.Errorf("conflicting order_id for (merchant=%s, txn=%s): %w",
+				o.MerchantID, o.TransactionID, err)
 		}
 		return fmt.Errorf("insert: %w", err)
 	}

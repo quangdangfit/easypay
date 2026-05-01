@@ -99,7 +99,7 @@ func run() error {
 	stripeClient = stripe.NewBreakerClient(stripeClient, "stripe")
 
 	// Service + handlers.
-	paySvc := service.NewPaymentService(idem, stripeClient, publisher, pendingOrders, service.PaymentServiceOptions{
+	paySvc := service.NewPaymentService(idem, stripeClient, publisher, pendingOrders, orderRepo, service.PaymentServiceOptions{
 		DefaultCurrency:   cfg.Stripe.DefaultCurrency,
 		CryptoContract:    cfg.Blockchain.ContractAddress,
 		CryptoChainID:     cfg.Blockchain.ChainID,
@@ -109,6 +109,7 @@ func run() error {
 		CheckoutTokenTTL:  cfg.App.CheckoutTokenTTL,
 		DefaultSuccessURL: cfg.App.CheckoutDefaultSuccessURL,
 		DefaultCancelURL:  cfg.App.CheckoutDefaultCancelURL,
+		OrderIDSecret:     cfg.App.OrderIDSecret,
 	})
 	webhookSvc := service.NewWebhookService(stripeClient, orderRepo, publisher, rc, cfg.Stripe.WebhookSecret)
 	checkoutResolver := service.NewCheckoutResolver(service.CheckoutResolverOptions{

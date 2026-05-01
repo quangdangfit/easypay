@@ -48,15 +48,38 @@ func TestPaymentConsumer_BatchHappyPath(t *testing.T) {
 	}
 }
 
-func TestPaymentConsumer_HandleOneTreatsDuplicateAsSuccess(t *testing.T) {
+// Benign duplicate: at-least-once redelivery of the same Kafka event. The
+// row already exists with the SAME order_id → ack and move on.
+func TestPaymentConsumer_HandleOneTreatsBenignDuplicateAsSuccess(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repo := repomock.NewMockOrderRepository(ctrl)
 	repo.EXPECT().Create(gomock.Any(), gomock.Any()).
-		Return(errors.New("Error 1062: Duplicate entry 'ord-1' for key 'order_id'"))
+		Return(errors.New("Error 1062: Duplicate entry 'ord-1' for key 'uniq_merchant_txn'"))
+	repo.EXPECT().GetByMerchantTransaction(gomock.Any(), "M1", "TXN-1").
+		Return(&domain.Order{OrderID: "ord-1", MerchantID: "M1", TransactionID: "TXN-1"}, nil)
 
 	c := NewPaymentConsumer(repo)
 	if err := c.HandleOne(context.Background(), mustEvent(t, "ord-1", "M1", "TXN-1")); err != nil {
-		t.Fatalf("expected nil for duplicate, got %v", err)
+		t.Fatalf("expected nil for benign duplicate, got %v", err)
+	}
+}
+
+// Conflicting duplicate: two service-layer calls raced and produced
+// different order_ids for the same (merchant, txn). The second insert MUST
+// surface as an error so the batch consumer DLQs it for ops to audit.
+func TestPaymentConsumer_HandleOneRejectsConflictingDuplicate(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockOrderRepository(ctrl)
+	repo.EXPECT().Create(gomock.Any(), gomock.Any()).
+		Return(errors.New("Error 1062: Duplicate entry 'M1-TXN-1' for key 'uniq_merchant_txn'"))
+	// DB has a DIFFERENT order_id for the same (merchant, txn).
+	repo.EXPECT().GetByMerchantTransaction(gomock.Any(), "M1", "TXN-1").
+		Return(&domain.Order{OrderID: "ord-WINNER", MerchantID: "M1", TransactionID: "TXN-1"}, nil)
+
+	c := NewPaymentConsumer(repo)
+	err := c.HandleOne(context.Background(), mustEvent(t, "ord-LOSER", "M1", "TXN-1"))
+	if err == nil {
+		t.Fatal("expected error for conflicting order_ids, got nil")
 	}
 }
 

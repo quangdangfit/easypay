@@ -40,6 +40,10 @@ func TooManyRequests(c *fiber.Ctx, code, message string) error {
 	return Fail(c, fiber.StatusTooManyRequests, code, message)
 }
 
+func Conflict(c *fiber.Ctx, code, message string) error {
+	return Fail(c, fiber.StatusConflict, code, message)
+}
+
 func InternalError(c *fiber.Ctx, code, message string) error {
 	return Fail(c, fiber.StatusInternalServerError, code, message)
 }

@@ -60,6 +60,8 @@ func (h *PaymentHandler) Create(c *fiber.Ctx) error {
 		switch {
 		case errors.Is(err, service.ErrInvalidRequest):
 			return response.BadRequest(c, "invalid_request", err.Error())
+		case errors.Is(err, service.ErrTransactionConflict):
+			return response.Conflict(c, "transaction_conflict", err.Error())
 		default:
 			return response.InternalError(c, "create_failed", err.Error())
 		}
