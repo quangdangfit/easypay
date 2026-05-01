@@ -16,24 +16,21 @@ import (
 )
 
 // CheckoutResolver lazily creates a Stripe Checkout Session the first time a
-// user opens the public hosted checkout URL.
+// user opens the public hosted-checkout URL.
 //
-// Reliability mechanics in priority order:
+// With sync write on POST /api/payments, the order row is always durable
+// before the merchant ever sees an order_id — so the legacy "Redis pending
+// snapshot" tier is gone. The remaining tiers, in priority order:
 //  1. In-process URL cache (sub-ms) — covers retry/reload/double-click.
-//  2. MySQL row → cached URL (ms).
-//  3. Redis pending-order snapshot (ms) — covers consumer lag right after POST.
-//  4. Distributed lock on order_id — concurrent first-clicks across pods don't
-//     all create Stripe sessions; the loser of the race re-reads.
-//  5. Token bucket rate limiter (Redis) — caps Stripe call rate per pod
+//  2. MySQL row → reconstruct URL from stripe_session_id (ms).
+//  3. Distributed lock on order_id — concurrent first-clicks across pods
+//     don't all create Stripe sessions; the loser of the race re-reads.
+//  4. Token bucket rate limiter (Redis) — caps Stripe call rate per pod
 //     fleet, e.g. 80 rps under Stripe's 100 rps default.
-//  6. Circuit breaker (gobreaker) — if Stripe is degraded, fail fast with
-//     ErrCircuitOpen so the user sees a polished "try again" page.
-//
-// checkoutResolver implements Checkouts.
+//  5. Stripe call (already wrapped by circuit breaker).
 type checkoutResolver struct {
 	stripe            stripe.Client
 	repo              repository.OrderRepository
-	pending           cache.PendingOrderStore
 	locker            cache.Locker
 	urlCache          cache.URLCache
 	bucket            cache.TokenBucket
@@ -44,7 +41,6 @@ type checkoutResolver struct {
 type CheckoutResolverOptions struct {
 	Stripe            stripe.Client
 	Repo              repository.OrderRepository
-	Pending           cache.PendingOrderStore
 	Locker            cache.Locker
 	URLCache          cache.URLCache
 	Bucket            cache.TokenBucket
@@ -56,7 +52,6 @@ func NewCheckoutResolver(opts CheckoutResolverOptions) Checkouts {
 	return &checkoutResolver{
 		stripe:            opts.Stripe,
 		repo:              opts.Repo,
-		pending:           opts.Pending,
 		locker:            opts.Locker,
 		urlCache:          opts.URLCache,
 		bucket:            opts.Bucket,
@@ -70,6 +65,14 @@ var (
 	ErrUnavailable   = errors.New("checkout temporarily unavailable")
 )
 
+// stripeCheckoutURL reconstructs the public Stripe Checkout URL from a
+// session_id. The stable form is "https://checkout.stripe.com/c/pay/<id>";
+// Stripe's redirect tail (the #fingerprint) doesn't matter — the page loads
+// from the session_id alone.
+func stripeCheckoutURL(sessionID string) string {
+	return "https://checkout.stripe.com/c/pay/" + sessionID
+}
+
 // Resolve returns the Stripe Checkout URL for an order. Multi-tier with
 // metrics and graceful degradation; see struct doc.
 func (r *checkoutResolver) Resolve(ctx context.Context, orderID string) (string, error) {
@@ -81,33 +84,29 @@ func (r *checkoutResolver) Resolve(ctx context.Context, orderID string) (string,
 		}
 	}
 
-	// Tier 2: MySQL row (covers normal post-consumer-commit case).
+	// Tier 2: MySQL row. If the row has a stripe_session_id, reconstruct
+	// the URL deterministically — no Stripe call needed.
 	t0 := time.Now()
 	order, err := r.repo.GetByOrderID(ctx, orderID)
 	middleware.CheckoutResolveDuration.WithLabelValues("db_lookup").Observe(time.Since(t0).Seconds())
-	if err == nil && order != nil && order.CheckoutURL != "" && order.StripeSessionID != "" {
-		r.cacheURL(orderID, order.CheckoutURL)
-		middleware.CheckoutResolveResult.WithLabelValues("cached_db").Inc()
-		return order.CheckoutURL, nil
-	}
-	if err != nil && !errors.Is(err, repository.ErrNotFound) {
-		middleware.CheckoutResolveResult.WithLabelValues("failed").Inc()
-		return "", fmt.Errorf("load order: %w", err)
-	}
-
-	// Tier 3: Redis snapshot fallback if consumer hasn't committed yet.
-	var snap *cache.PendingOrder
-	if order == nil {
-		t0 := time.Now()
-		snap, err = r.pending.Get(ctx, orderID)
-		middleware.CheckoutResolveDuration.WithLabelValues("redis_snap").Observe(time.Since(t0).Seconds())
-		if err != nil {
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
 			middleware.CheckoutResolveResult.WithLabelValues("not_ready").Inc()
 			return "", ErrOrderNotReady
 		}
+		middleware.CheckoutResolveResult.WithLabelValues("failed").Inc()
+		return "", fmt.Errorf("load order: %w", err)
+	}
+	if order.StripeSessionID != "" {
+		url := stripeCheckoutURL(order.StripeSessionID)
+		r.cacheURL(orderID, url)
+		middleware.CheckoutResolveResult.WithLabelValues("cached_db").Inc()
+		return url, nil
 	}
 
-	// Tier 4: distributed lock to coalesce concurrent first-clicks.
+	// Tier 3 (lazy mode): order exists but Stripe session not yet created.
+	// Acquire a per-order lock so concurrent first-clicks don't all hit
+	// Stripe.
 	t0 = time.Now()
 	lock, err := r.locker.Acquire(ctx, "checkout:"+orderID, 10*time.Second)
 	middleware.CheckoutResolveDuration.WithLabelValues("lock_acquire").Observe(time.Since(t0).Seconds())
@@ -118,21 +117,14 @@ func (r *checkoutResolver) Resolve(ctx context.Context, orderID string) (string,
 	}
 	defer func() { _ = lock.Release(ctx) }()
 
-	// Re-check after lock — same condition as the initial cache hit.
-	// Both fields must be present, otherwise we may return a lazy URL that
-	// points back at /pay/:id and create a redirect loop.
-	if order != nil && order.CheckoutURL != "" && order.StripeSessionID != "" {
-		r.cacheURL(orderID, order.CheckoutURL)
-		return order.CheckoutURL, nil
-	}
-	if order == nil {
-		if cached, _ := r.repo.GetByOrderID(ctx, orderID); cached != nil && cached.CheckoutURL != "" && cached.StripeSessionID != "" {
-			r.cacheURL(orderID, cached.CheckoutURL)
-			return cached.CheckoutURL, nil
-		}
+	// Re-check under lock — another pod may have just persisted the session.
+	if cached, getErr := r.repo.GetByOrderID(ctx, orderID); getErr == nil && cached != nil && cached.StripeSessionID != "" {
+		url := stripeCheckoutURL(cached.StripeSessionID)
+		r.cacheURL(orderID, url)
+		return url, nil
 	}
 
-	// Tier 5: rate limit Stripe calls across the fleet.
+	// Tier 4: rate limit Stripe calls across the fleet.
 	if r.bucket != nil {
 		err := r.bucket.Allow(ctx)
 		switch {
@@ -149,9 +141,9 @@ func (r *checkoutResolver) Resolve(ctx context.Context, orderID string) (string,
 		}
 	}
 
-	// Tier 6: Stripe call (already wrapped by circuit breaker).
+	// Tier 5: Stripe call (already wrapped by circuit breaker).
 	t0 = time.Now()
-	session, err := r.createSession(ctx, order, snap)
+	session, err := r.createSession(ctx, order)
 	middleware.CheckoutResolveDuration.WithLabelValues("stripe_create").Observe(time.Since(t0).Seconds())
 	if err != nil {
 		if errors.Is(err, stripe.ErrCircuitOpen) {
@@ -162,9 +154,10 @@ func (r *checkoutResolver) Resolve(ctx context.Context, orderID string) (string,
 		return "", err
 	}
 
-	// Persist + warm cache.
-	if order != nil {
-		_ = r.repo.UpdateCheckout(ctx, orderID, session.ID, session.PaymentIntentID, session.URL)
+	// Persist + warm cache. session.URL is what Stripe returned; we store
+	// the session_id (not the URL) and reconstruct on subsequent reads.
+	if err := r.repo.UpdateCheckout(ctx, orderID, session.ID, session.PaymentIntentID); err != nil {
+		logger.L().Warn("update checkout persist failed", "order_id", orderID, "err", err)
 	}
 	r.cacheURL(orderID, session.URL)
 	middleware.CheckoutResolveResult.WithLabelValues("created").Inc()
@@ -179,43 +172,27 @@ func (r *checkoutResolver) cacheURL(orderID, url string) {
 
 func (r *checkoutResolver) resolveAfterLock(ctx context.Context, orderID string) (string, error) {
 	order, err := r.repo.GetByOrderID(ctx, orderID)
-	if err == nil && order != nil && order.CheckoutURL != "" && order.StripeSessionID != "" {
-		r.cacheURL(orderID, order.CheckoutURL)
-		return order.CheckoutURL, nil
+	if err == nil && order != nil && order.StripeSessionID != "" {
+		url := stripeCheckoutURL(order.StripeSessionID)
+		r.cacheURL(orderID, url)
+		return url, nil
 	}
 	return "", ErrOrderNotReady
 }
 
-func (r *checkoutResolver) createSession(ctx context.Context, order *domain.Order, snap *cache.PendingOrder) (*stripe.CheckoutSession, error) {
-	var req stripe.CreateCheckoutRequest
-	switch {
-	case order != nil:
-		req = stripe.CreateCheckoutRequest{
-			Amount:             order.Amount,
-			Currency:           strings.ToLower(order.Currency),
-			PaymentMethodTypes: []string{"card"},
-			ClientReferenceID:  order.OrderID,
-			Metadata: map[string]string{
-				"order_id":    order.OrderID,
-				"merchant_id": order.MerchantID,
-			},
-		}
-	case snap != nil:
-		req = stripe.CreateCheckoutRequest{
-			Amount:             snap.Amount,
-			Currency:           strings.ToLower(snap.Currency),
-			PaymentMethodTypes: []string{"card"},
-			CustomerEmail:      snap.CustomerEmail,
-			SuccessURL:         snap.SuccessURL,
-			CancelURL:          snap.CancelURL,
-			ClientReferenceID:  snap.OrderID,
-			Metadata: map[string]string{
-				"order_id":    snap.OrderID,
-				"merchant_id": snap.MerchantID,
-			},
-		}
-	default:
+func (r *checkoutResolver) createSession(ctx context.Context, order *domain.Order) (*stripe.CheckoutSession, error) {
+	if order == nil {
 		return nil, ErrOrderNotReady
+	}
+	req := stripe.CreateCheckoutRequest{
+		Amount:             order.Amount,
+		Currency:           strings.ToLower(order.Currency),
+		PaymentMethodTypes: []string{"card"},
+		ClientReferenceID:  order.OrderID,
+		Metadata: map[string]string{
+			"order_id":    order.OrderID,
+			"merchant_id": order.MerchantID,
+		},
 	}
 	// Stripe Checkout Sessions in `mode=payment` REQUIRE success_url. Fall
 	// back to gateway defaults when the merchant didn't supply one.

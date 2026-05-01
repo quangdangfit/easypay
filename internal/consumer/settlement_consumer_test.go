@@ -11,8 +11,18 @@ import (
 
 	kafkago "github.com/segmentio/kafka-go"
 
+	"github.com/quangdangfit/easypay/internal/config"
 	"github.com/quangdangfit/easypay/internal/kafka"
 )
+
+func testKafkaCfg() config.KafkaConfig {
+	return config.KafkaConfig{
+		Brokers:        []string{"127.0.0.1:1"},
+		TopicConfirmed: "cfm",
+		TopicDLQ:       "dlq",
+		ConsumerGroup:  "test",
+	}
+}
 
 func encodeConfirmed(t *testing.T, ev kafka.PaymentConfirmedEvent) []byte {
 	t.Helper()
@@ -23,8 +33,16 @@ func encodeConfirmed(t *testing.T, ev kafka.PaymentConfirmedEvent) []byte {
 	return b
 }
 
+// fixedLookup returns a static MerchantLookup with the given URL/secret
+// for any merchant_id. Empty URL = skip notification.
+func fixedLookup(url, secret string) MerchantLookup {
+	return func(string) MerchantCallback {
+		return MerchantCallback{URL: url, Secret: secret}
+	}
+}
+
 func TestSettlement_HandleOne_NoCallbackIsNoOp(t *testing.T) {
-	c := NewSettlementConsumer(func(string) string { return "secret" })
+	c := NewSettlementConsumer(fixedLookup("", "secret"))
 	body := encodeConfirmed(t, kafka.PaymentConfirmedEvent{OrderID: "ord-1", MerchantID: "M1"})
 	if err := c.HandleOne(context.Background(), kafkago.Message{Value: body}); err != nil {
 		t.Fatalf("err: %v", err)
@@ -42,8 +60,8 @@ func TestSettlement_HandleOne_HappyPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewSettlementConsumer(func(string) string { return "secret" })
-	body := encodeConfirmed(t, kafka.PaymentConfirmedEvent{OrderID: "ord-1", MerchantID: "M1", CallbackURL: srv.URL})
+	c := NewSettlementConsumer(fixedLookup(srv.URL, "secret"))
+	body := encodeConfirmed(t, kafka.PaymentConfirmedEvent{OrderID: "ord-1", MerchantID: "M1"})
 	if err := c.HandleOne(context.Background(), kafkago.Message{Value: body}); err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -54,15 +72,15 @@ func TestSettlement_HandleOne_HappyPath(t *testing.T) {
 
 func TestSettlement_HandleOne_RetriesOn5xx(t *testing.T) {
 	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
 
-	c := NewSettlementConsumer(func(string) string { return "secret" })
+	c := NewSettlementConsumer(fixedLookup(srv.URL, "secret"))
 	c.maxAttempts = 2
-	body := encodeConfirmed(t, kafka.PaymentConfirmedEvent{OrderID: "ord-1", MerchantID: "M1", CallbackURL: srv.URL})
+	body := encodeConfirmed(t, kafka.PaymentConfirmedEvent{OrderID: "ord-1", MerchantID: "M1"})
 	err := c.HandleOne(context.Background(), kafkago.Message{Value: body})
 	if err == nil {
 		t.Fatal("expected error after retries")
@@ -73,24 +91,33 @@ func TestSettlement_HandleOne_RetriesOn5xx(t *testing.T) {
 }
 
 func TestSettlement_HandleOne_RejectsMissingSecret(t *testing.T) {
-	c := NewSettlementConsumer(func(string) string { return "" })
-	body := encodeConfirmed(t, kafka.PaymentConfirmedEvent{OrderID: "ord-1", MerchantID: "M1", CallbackURL: "https://x"})
+	c := NewSettlementConsumer(fixedLookup("https://x", ""))
+	body := encodeConfirmed(t, kafka.PaymentConfirmedEvent{OrderID: "ord-1", MerchantID: "M1"})
 	if err := c.HandleOne(context.Background(), kafkago.Message{Value: body}); err == nil {
 		t.Fatal("expected secret-missing error")
 	}
 }
 
 func TestSettlement_Handle_ReturnsFirstError(t *testing.T) {
-	c := NewSettlementConsumer(func(string) string { return "" })
-	good := encodeConfirmed(t, kafka.PaymentConfirmedEvent{OrderID: "ord-1"})
-	bad := encodeConfirmed(t, kafka.PaymentConfirmedEvent{OrderID: "ord-2", MerchantID: "M1", CallbackURL: "https://x"})
-	if err := c.Handle(context.Background(), []kafkago.Message{{Value: good}, {Value: bad}}); err == nil {
+	c := NewSettlementConsumer(fixedLookup("https://x", ""))
+	// First message has no callback (skipped, no error). Second has a URL
+	// but no secret — error.
+	good := encodeConfirmed(t, kafka.PaymentConfirmedEvent{OrderID: "ord-1", MerchantID: "skip"})
+	bad := encodeConfirmed(t, kafka.PaymentConfirmedEvent{OrderID: "ord-2", MerchantID: "M1"})
+	c2 := NewSettlementConsumer(func(merchantID string) MerchantCallback {
+		if merchantID == "skip" {
+			return MerchantCallback{}
+		}
+		return MerchantCallback{URL: "https://x"}
+	})
+	if err := c2.Handle(context.Background(), []kafkago.Message{{Value: good}, {Value: bad}}); err == nil {
 		t.Fatal("expected error from second message")
 	}
+	_ = c
 }
 
 func TestSettlement_NewBatchWiresUp(t *testing.T) {
-	c := NewSettlementConsumer(func(string) string { return "" })
+	c := NewSettlementConsumer(fixedLookup("", ""))
 	bc := c.NewBatch(testKafkaCfg())
 	if bc.BatchSize != 50 || bc.BatchWait != 100*time.Millisecond {
 		t.Fatalf("settlement batch overrides not applied: %+v", bc)

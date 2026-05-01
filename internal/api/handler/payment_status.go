@@ -28,9 +28,11 @@ type paymentStatusResponse struct {
 	PaymentMethod         string `json:"payment_method,omitempty"`
 	StripeSessionID       string `json:"stripe_session_id,omitempty"`
 	StripePaymentIntentID string `json:"stripe_payment_intent_id,omitempty"`
-	CheckoutURL           string `json:"checkout_url,omitempty"`
-	CreatedAt             string `json:"created_at"`
-	UpdatedAt             string `json:"updated_at"`
+	// CheckoutURL is reconstructed from stripe_session_id at response time —
+	// the row itself doesn't store this column.
+	CheckoutURL string `json:"checkout_url,omitempty"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 // Get handles GET /api/payments/:id. Authorisation: a merchant can only
@@ -66,9 +68,19 @@ func (h *PaymentStatusHandler) Get(c *fiber.Ctx) error {
 		PaymentMethod:         order.PaymentMethod,
 		StripeSessionID:       order.StripeSessionID,
 		StripePaymentIntentID: order.StripePaymentIntentID,
-		CheckoutURL:           order.CheckoutURL,
+		CheckoutURL:           checkoutURLFor(order),
 		CreatedAt:             order.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:             order.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	}
 	return response.OK(c, out)
+}
+
+// checkoutURLFor reconstructs a Stripe Checkout URL from the order's
+// session_id. Returns "" when no Stripe session has been created yet (e.g.
+// lazy-mode orders the user hasn't opened).
+func checkoutURLFor(o *domain.Order) string {
+	if o.StripeSessionID == "" {
+		return ""
+	}
+	return "https://checkout.stripe.com/c/pay/" + o.StripeSessionID
 }

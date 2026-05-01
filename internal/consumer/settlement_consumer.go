@@ -18,22 +18,35 @@ import (
 	"github.com/quangdangfit/easypay/pkg/logger"
 )
 
+// MerchantCallback is the per-merchant lookup the settlement consumer
+// performs on every confirmed event. The event no longer carries the
+// callback URL — it lives on the merchant row, so a merchant rotating
+// their callback takes effect immediately.
+type MerchantCallback struct {
+	URL    string
+	Secret string
+}
+
+// MerchantLookup returns the callback URL and HMAC signing secret for a
+// merchant. Empty URL → skip notification (not an error).
+type MerchantLookup func(merchantID string) MerchantCallback
+
 // SettlementConsumer consumes payment.confirmed and POSTs the event to the
 // merchant's callback_url. Body is signed with the merchant's secret using
-// HMAC-SHA256 (X-Signature). Failures are retried via the consumer base.
+// HMAC-SHA256 (X-Signature). Failures are retried per message.
 type SettlementConsumer struct {
 	httpClient  *http.Client
-	merchantKey func(merchantID string) string
+	lookup      MerchantLookup
 	maxAttempts int
 }
 
-// NewSettlementConsumer wires a SettlementConsumer. merchantKey is a
-// function (rather than a repository) so tests can inject a fake without
-// depending on the merchant repository concrete impl.
-func NewSettlementConsumer(merchantKey func(merchantID string) string) *SettlementConsumer {
+// NewSettlementConsumer wires a SettlementConsumer. lookup is a function
+// (rather than a repository) so tests can inject a fake without depending
+// on the merchant repository concrete impl.
+func NewSettlementConsumer(lookup MerchantLookup) *SettlementConsumer {
 	return &SettlementConsumer{
 		httpClient:  &http.Client{Timeout: 10 * time.Second},
-		merchantKey: merchantKey,
+		lookup:      lookup,
 		maxAttempts: 3,
 	}
 }
@@ -63,12 +76,12 @@ func (s *SettlementConsumer) HandleOne(ctx context.Context, m kafkago.Message) e
 		return fmt.Errorf("decode confirmed event: %w", err)
 	}
 	log := logger.With(ctx).With("order_id", ev.OrderID, "merchant_id", ev.MerchantID)
-	if ev.CallbackURL == "" {
+	cb := s.lookup(ev.MerchantID)
+	if cb.URL == "" {
 		log.Debug("no callback url, skipping merchant notification")
 		return nil
 	}
-	secret := s.merchantKey(ev.MerchantID)
-	if secret == "" {
+	if cb.Secret == "" {
 		return fmt.Errorf("no secret for merchant %s", ev.MerchantID)
 	}
 	body, err := json.Marshal(ev)
@@ -77,7 +90,7 @@ func (s *SettlementConsumer) HandleOne(ctx context.Context, m kafkago.Message) e
 	}
 
 	for attempt := 1; attempt <= s.maxAttempts; attempt++ {
-		err = s.sendOnce(ctx, ev.CallbackURL, secret, body)
+		err = s.sendOnce(ctx, cb.URL, cb.Secret, body)
 		if err == nil {
 			log.Info("merchant callback delivered", "attempt", attempt)
 			return nil

@@ -126,7 +126,6 @@ func (t *ConfirmationTracker) processOne(ctx context.Context, p *domain.PendingT
 		Status:      string(domain.OrderStatusPaid),
 		Amount:      order.Amount,
 		Currency:    order.Currency,
-		CallbackURL: order.CallbackURL,
 		ConfirmedAt: time.Now().UTC().Unix(),
 	}
 	if err := t.Publisher.PublishPaymentConfirmed(ctx, confirmed); err != nil {

@@ -55,3 +55,18 @@ func (mr *MockMerchantRepositoryMockRecorder) GetByAPIKey(ctx, apiKey any) *gomo
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByAPIKey", reflect.TypeOf((*MockMerchantRepository)(nil).GetByAPIKey), ctx, apiKey)
 }
+
+// GetByMerchantID mocks base method.
+func (m *MockMerchantRepository) GetByMerchantID(ctx context.Context, merchantID string) (*domain.Merchant, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetByMerchantID", ctx, merchantID)
+	ret0, _ := ret[0].(*domain.Merchant)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetByMerchantID indicates an expected call of GetByMerchantID.
+func (mr *MockMerchantRepositoryMockRecorder) GetByMerchantID(ctx, merchantID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByMerchantID", reflect.TypeOf((*MockMerchantRepository)(nil).GetByMerchantID), ctx, merchantID)
+}

@@ -15,6 +15,7 @@ var ErrMerchantNotFound = errors.New("merchant not found")
 
 type MerchantRepository interface {
 	GetByAPIKey(ctx context.Context, apiKey string) (*domain.Merchant, error)
+	GetByMerchantID(ctx context.Context, merchantID string) (*domain.Merchant, error)
 }
 
 type merchantRepo struct {
@@ -30,11 +31,34 @@ const merchantCols = `id, merchant_id, name, api_key, secret_key,
 		COALESCE(callback_url,''), rate_limit, status, created_at`
 
 func (r *merchantRepo) GetByAPIKey(ctx context.Context, apiKey string) (*domain.Merchant, error) {
-	if m, ok := r.cache.get(apiKey); ok {
+	if m, ok := r.cache.get("api:" + apiKey); ok {
 		return m, nil
 	}
 	q := `SELECT ` + merchantCols + ` FROM merchants WHERE api_key = ? LIMIT 1`
 	row := r.db.QueryRowContext(ctx, q, apiKey)
+	m, err := scanMerchant(row)
+	if err != nil {
+		return nil, err
+	}
+	r.cache.put("api:"+apiKey, m)
+	return m, nil
+}
+
+func (r *merchantRepo) GetByMerchantID(ctx context.Context, merchantID string) (*domain.Merchant, error) {
+	if m, ok := r.cache.get("mid:" + merchantID); ok {
+		return m, nil
+	}
+	q := `SELECT ` + merchantCols + ` FROM merchants WHERE merchant_id = ? LIMIT 1`
+	row := r.db.QueryRowContext(ctx, q, merchantID)
+	m, err := scanMerchant(row)
+	if err != nil {
+		return nil, err
+	}
+	r.cache.put("mid:"+merchantID, m)
+	return m, nil
+}
+
+func scanMerchant(row *sql.Row) (*domain.Merchant, error) {
 	var m domain.Merchant
 	var status string
 	if err := row.Scan(&m.ID, &m.MerchantID, &m.Name, &m.APIKey, &m.SecretKey,
@@ -45,7 +69,6 @@ func (r *merchantRepo) GetByAPIKey(ctx context.Context, apiKey string) (*domain.
 		return nil, fmt.Errorf("query merchant: %w", err)
 	}
 	m.Status = domain.MerchantStatus(status)
-	r.cache.put(apiKey, &m)
 	return &m, nil
 }
 

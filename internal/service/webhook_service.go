@@ -17,7 +17,14 @@ import (
 	"github.com/quangdangfit/easypay/pkg/logger"
 )
 
-var ErrWebhookDuplicate = errors.New("duplicate webhook event")
+var (
+	ErrWebhookDuplicate = errors.New("duplicate webhook event")
+	// ErrWebhookOrderMissing is a hard error: with sync write, a Stripe
+	// webhook for an order_id we don't recognise should never happen unless
+	// metadata was tampered with or the row was hand-deleted. We surface it
+	// loudly so the caller returns 5xx and Stripe retries (and ops alerts).
+	ErrWebhookOrderMissing = errors.New("webhook order_id not found in DB")
+)
 
 // webhookService implements Webhooks.
 type webhookService struct {
@@ -125,6 +132,9 @@ func (s *webhookService) handleSucceeded(ctx context.Context, e *stripe.Event) e
 	}
 
 	if err := s.repo.UpdateStatus(ctx, orderID, domain.OrderStatusPaid, piID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return fmt.Errorf("%w: %s", ErrWebhookOrderMissing, orderID)
+		}
 		return fmt.Errorf("update order: %w", err)
 	}
 
@@ -139,7 +149,6 @@ func (s *webhookService) handleSucceeded(ctx context.Context, e *stripe.Event) e
 		StripePaymentIntentID: order.StripePaymentIntentID,
 		Amount:                order.Amount,
 		Currency:              order.Currency,
-		CallbackURL:           order.CallbackURL,
 		ConfirmedAt:           time.Now().UTC().Unix(),
 	}
 	return s.publisher.PublishPaymentConfirmed(ctx, confirmed)
@@ -159,6 +168,9 @@ func (s *webhookService) handleFailed(ctx context.Context, e *stripe.Event) erro
 		piID = o.ID
 	}
 	if err := s.repo.UpdateStatus(ctx, orderID, domain.OrderStatusFailed, piID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return fmt.Errorf("%w: %s", ErrWebhookOrderMissing, orderID)
+		}
 		return fmt.Errorf("update order failed: %w", err)
 	}
 	return nil
@@ -179,7 +191,7 @@ func (s *webhookService) handleRefunded(ctx context.Context, e *stripe.Event) er
 	orderID := o.Metadata["order_id"]
 	if orderID == "" && piID != "" {
 		// charge.refunded events sometimes don't carry our metadata; look up
-		// the order by payment_intent_id.
+		// the order by payment_intent_id (slow fan-out across shards).
 		if order, lookupErr := s.repo.GetByPaymentIntentID(ctx, piID); lookupErr == nil {
 			orderID = order.OrderID
 		}
@@ -188,6 +200,9 @@ func (s *webhookService) handleRefunded(ctx context.Context, e *stripe.Event) er
 		return fmt.Errorf("event %s missing order_id and unresolvable", e.ID)
 	}
 	if err := s.repo.UpdateStatus(ctx, orderID, domain.OrderStatusRefunded, piID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return fmt.Errorf("%w: %s", ErrWebhookOrderMissing, orderID)
+		}
 		return fmt.Errorf("update order refunded: %w", err)
 	}
 	order, err := s.repo.GetByOrderID(ctx, orderID)
@@ -201,7 +216,6 @@ func (s *webhookService) handleRefunded(ctx context.Context, e *stripe.Event) er
 		StripePaymentIntentID: order.StripePaymentIntentID,
 		Amount:                order.Amount,
 		Currency:              order.Currency,
-		CallbackURL:           order.CallbackURL,
 		ConfirmedAt:           time.Now().UTC().Unix(),
 	}
 	return s.publisher.PublishPaymentConfirmed(ctx, confirmed)

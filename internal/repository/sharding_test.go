@@ -16,15 +16,32 @@ func TestShardOf_RangeAndDeterminism(t *testing.T) {
 }
 
 func TestShardOf_DistributesAcrossShards(t *testing.T) {
-	// Across 200 distinct merchant IDs, all 8 shards should see traffic.
-	seen := map[uint32]bool{}
+	// Across 200 distinct merchant IDs, the FNV-32a hash should cover most
+	// of the 16 shards. Threshold is conservative (>=8) to keep the test
+	// stable across hash-function tweaks.
+	seen := map[uint8]bool{}
 	for i := 0; i < 200; i++ {
 		m := []byte("merchant_")
 		m = append(m, byte('A'+(i/26)))
 		m = append(m, byte('A'+(i%26)))
 		seen[ShardOf(string(m))] = true
 	}
-	if len(seen) < 4 {
-		t.Errorf("hash distribution too narrow: %d shards", len(seen))
+	if len(seen) < 8 {
+		t.Errorf("hash distribution too narrow: %d/%d shards", len(seen), ShardCount)
+	}
+}
+
+func TestShardTable(t *testing.T) {
+	cases := map[uint8]string{
+		0:  "orders_00",
+		1:  "orders_01",
+		9:  "orders_09",
+		10: "orders_0a",
+		15: "orders_0f",
+	}
+	for in, want := range cases {
+		if got := ShardTable(in); got != want {
+			t.Errorf("ShardTable(%d) = %q, want %q", in, got, want)
+		}
 	}
 }

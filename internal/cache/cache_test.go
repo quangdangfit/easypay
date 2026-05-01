@@ -11,9 +11,7 @@ import (
 )
 
 // rclient spins up an in-process Redis (miniredis) and returns a wired
-// go-redis client. miniredis supports BF.* commands transparently — they
-// no-op + return an OK reply, which is exactly what our idempotency layer
-// treats as a "module not loaded, fall through" path.
+// go-redis client.
 func rclient(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
 	t.Helper()
 	mr, err := miniredis.Run()
@@ -24,42 +22,6 @@ func rclient(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rc.Close() })
 	return rc, mr
-}
-
-// --- idempotency ---
-
-func TestIdempotency_SetThenCheck(t *testing.T) {
-	rc, _ := rclient(t)
-	c := NewIdempotency(rc)
-	ctx := context.Background()
-
-	if err := c.Set(ctx, "M1:TXN-1", []byte(`{"x":1}`), time.Minute); err != nil {
-		t.Fatalf("set: %v", err)
-	}
-	exists, body, err := c.Check(ctx, "M1:TXN-1")
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	// miniredis doesn't implement BF.EXISTS so the fallback path returns
-	// "maybe" → SET hit → exists=true.
-	if !exists {
-		t.Fatal("expected exists")
-	}
-	if string(body) != `{"x":1}` {
-		t.Fatalf("body: %s", body)
-	}
-}
-
-func TestIdempotency_MissingKey(t *testing.T) {
-	rc, _ := rclient(t)
-	c := NewIdempotency(rc)
-	exists, _, err := c.Check(context.Background(), "absent")
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if exists {
-		t.Fatal("expected miss")
-	}
 }
 
 // --- rate limiter ---
@@ -165,32 +127,5 @@ func TestTokenBucket_AllowsThenBlocks(t *testing.T) {
 	}
 	if err := b.Allow(ctx); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("expected ErrRateLimited, got %v", err)
-	}
-}
-
-// --- pending order store ---
-
-func TestPendingOrderStore_PutGet(t *testing.T) {
-	rc, _ := rclient(t)
-	s := NewPendingOrderStore(rc)
-	ctx := context.Background()
-	o := &PendingOrder{OrderID: "ord-1", MerchantID: "M1", Amount: 100, Currency: "USD"}
-	if err := s.Put(ctx, o, time.Minute); err != nil {
-		t.Fatalf("put: %v", err)
-	}
-	got, err := s.Get(ctx, "ord-1")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.OrderID != o.OrderID || got.Amount != o.Amount {
-		t.Fatalf("mismatch: %+v vs %+v", got, o)
-	}
-}
-
-func TestPendingOrderStore_Missing(t *testing.T) {
-	rc, _ := rclient(t)
-	s := NewPendingOrderStore(rc)
-	if _, err := s.Get(context.Background(), "absent"); !errors.Is(err, ErrPendingOrderNotFound) {
-		t.Fatalf("want ErrPendingOrderNotFound, got %v", err)
 	}
 }

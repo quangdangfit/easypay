@@ -21,6 +21,11 @@ func NewWebhookHandler(svc service.Webhooks) *WebhookHandler {
 
 // Stripe handles POST /webhook/stripe. We must respond 2xx in <5s; any heavy
 // downstream work happens in Kafka consumers.
+//
+// With sync write on POST /api/payments, a webhook arriving for an
+// unknown order_id is no longer a benign race — it's a hard error. We
+// return 500 so Stripe retries and an ops alert fires; if the order
+// genuinely never existed (metadata tampering), the 500s will be visible.
 func (h *WebhookHandler) Stripe(c *fiber.Ctx) error {
 	sig := c.Get(stripeSignatureHeader)
 	body := c.Body()
@@ -33,7 +38,12 @@ func (h *WebhookHandler) Stripe(c *fiber.Ctx) error {
 		// Duplicate is success — Stripe should stop retrying.
 		return c.SendStatus(fiber.StatusOK)
 	}
-	logger.With(c.UserContext()).Warn("stripe webhook rejected", "err", err)
+	log := logger.With(c.UserContext())
+	if errors.Is(err, service.ErrWebhookOrderMissing) {
+		log.Error("stripe webhook for unknown order — possible tampering or DB anomaly", "err", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	log.Warn("stripe webhook rejected", "err", err)
 	// 400 — Stripe will retry. Use 4xx for verifiable client errors (bad sig)
 	// to make it explicit; persistent transient errors use 5xx upstream.
 	return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})

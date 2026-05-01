@@ -112,7 +112,6 @@ func (r *orderReconciliation) reconcileOne(ctx context.Context, o *domain.Order)
 			StripePaymentIntentID: pi.ID,
 			Amount:                o.Amount,
 			Currency:              o.Currency,
-			CallbackURL:           o.CallbackURL,
 			ConfirmedAt:           time.Now().UTC().Unix(),
 		})
 		log.Info("force-confirmed via reconciliation")

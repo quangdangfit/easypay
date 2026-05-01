@@ -40,7 +40,7 @@ func (r *pendingTxRepo) Create(ctx context.Context, tx *domain.PendingTx) error 
 		amt = tx.Amount.String()
 	}
 	res, err := r.db.ExecContext(ctx, q,
-		tx.TxHash, tx.BlockNumber, tx.OrderID, nullStr(tx.Payer), nullStr(tx.Token),
+		tx.TxHash, tx.BlockNumber, tx.OrderID, nullString(tx.Payer), nullString(tx.Token),
 		amt, tx.ChainID, tx.Confirmations, tx.RequiredConfirm, string(tx.Status),
 	)
 	if err != nil {

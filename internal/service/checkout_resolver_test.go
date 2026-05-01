@@ -17,7 +17,6 @@ import (
 // resolverDeps holds the wired dependencies so tests can inspect state.
 type resolverDeps struct {
 	repo    *orderStore
-	pending *pendingStore
 	stripeC *stripeStub
 }
 
@@ -25,13 +24,11 @@ func newResolverWithDeps(t *testing.T, opts ...func(*CheckoutResolverOptions)) (
 	t.Helper()
 	d := &resolverDeps{
 		repo:    newOrderStore(t),
-		pending: newPendingStore(t),
 		stripeC: newStripeStub(t),
 	}
 	o := CheckoutResolverOptions{
 		Stripe:            d.stripeC.mock,
 		Repo:              d.repo.mock,
-		Pending:           d.pending.mock,
 		Locker:            successLocker(t),
 		URLCache:          cache.NewURLCache(8, 5*time.Second),
 		Bucket:            allowingBucket(t),
@@ -44,20 +41,25 @@ func newResolverWithDeps(t *testing.T, opts ...func(*CheckoutResolverOptions)) (
 	return NewCheckoutResolver(o), d
 }
 
-func TestResolve_DBHotPath(t *testing.T) {
+func TestResolve_DBHotPath_ReconstructsFromSession(t *testing.T) {
 	r, d := newResolverWithDeps(t)
-	d.repo.byID["ord-1"] = &domain.Order{OrderID: "ord-1", CheckoutURL: "https://stripe/cached", StripeSessionID: "cs_old"}
+	d.repo.byID["ord-1"] = &domain.Order{OrderID: "ord-1", StripeSessionID: "cs_old"}
 	url, err := r.Resolve(context.Background(), "ord-1")
-	if err != nil || url != "https://stripe/cached" {
-		t.Fatalf("url=%q err=%v", url, err)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if url != "https://checkout.stripe.com/c/pay/cs_old" {
+		t.Fatalf("expected reconstructed url, got %q", url)
+	}
+	if d.stripeC.createCalls != 0 {
+		t.Fatalf("must not call Stripe when session_id is already persisted, got %d", d.stripeC.createCalls)
 	}
 }
 
-func TestResolve_LazyURLNotReturnedAsHit(t *testing.T) {
-	// DB row has a self-hosted URL but no Stripe session yet — must not be
-	// returned as a cache hit (would cause redirect loop).
+func TestResolve_LazyOrderTriggersStripeCreate(t *testing.T) {
+	// Row exists but no Stripe session yet — resolver creates one.
 	r, d := newResolverWithDeps(t)
-	d.repo.byID["ord-1"] = &domain.Order{OrderID: "ord-1", CheckoutURL: "http://localhost:8080/pay/ord-1", StripeSessionID: ""}
+	d.repo.byID["ord-1"] = &domain.Order{OrderID: "ord-1", Amount: 1500, Currency: "USD"}
 	url, err := r.Resolve(context.Background(), "ord-1")
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -73,22 +75,7 @@ func TestResolve_LazyURLNotReturnedAsHit(t *testing.T) {
 	}
 }
 
-func TestResolve_FallsBackToPendingSnapshot(t *testing.T) {
-	r, d := newResolverWithDeps(t)
-	d.pending.store["ord-1"] = &cache.PendingOrder{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD"}
-	url, err := r.Resolve(context.Background(), "ord-1")
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if url != "https://checkout.stripe.com/cs_test_123" {
-		t.Fatalf("got %q", url)
-	}
-	if d.stripeC.createCalls != 1 {
-		t.Fatalf("expected 1 stripe call, got %d", d.stripeC.createCalls)
-	}
-}
-
-func TestResolve_NotReadyWhenBothMiss(t *testing.T) {
+func TestResolve_NotReadyWhenRowMissing(t *testing.T) {
 	r, _ := newResolverWithDeps(t)
 	_, err := r.Resolve(context.Background(), "ord-none")
 	if !errors.Is(err, ErrOrderNotReady) {
@@ -100,7 +87,7 @@ func TestResolve_RateLimitReturnsUnavailable(t *testing.T) {
 	r, d := newResolverWithDeps(t, func(o *CheckoutResolverOptions) {
 		o.Bucket = blockingBucket(t)
 	})
-	d.pending.store["ord-1"] = &cache.PendingOrder{OrderID: "ord-1"}
+	d.repo.byID["ord-1"] = &domain.Order{OrderID: "ord-1", Amount: 1500, Currency: "USD"}
 	_, err := r.Resolve(context.Background(), "ord-1")
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("want ErrUnavailable, got %v", err)
@@ -116,7 +103,7 @@ func TestResolve_BreakerOpenReturnsUnavailable(t *testing.T) {
 	r, d := newResolverWithDeps(t, func(o *CheckoutResolverOptions) {
 		o.Stripe = openMock
 	})
-	d.pending.store["ord-1"] = &cache.PendingOrder{OrderID: "ord-1"}
+	d.repo.byID["ord-1"] = &domain.Order{OrderID: "ord-1", Amount: 1500, Currency: "USD"}
 	_, err := r.Resolve(context.Background(), "ord-1")
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("want ErrUnavailable, got %v", err)
@@ -124,7 +111,7 @@ func TestResolve_BreakerOpenReturnsUnavailable(t *testing.T) {
 }
 
 func TestResolveAfterLock_ReturnsURLWhenPresent(t *testing.T) {
-	repo := newOrderStore(t, &domain.Order{OrderID: "ord-1", CheckoutURL: "https://stripe/x", StripeSessionID: "cs_x"})
+	repo := newOrderStore(t, &domain.Order{OrderID: "ord-1", StripeSessionID: "cs_x"})
 	r := NewCheckoutResolver(CheckoutResolverOptions{
 		Repo:     repo.mock,
 		URLCache: cache.NewURLCache(8, time.Second),
@@ -133,7 +120,7 @@ func TestResolveAfterLock_ReturnsURLWhenPresent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if url != "https://stripe/x" {
+	if url != "https://checkout.stripe.com/c/pay/cs_x" {
 		t.Fatalf("url=%q", url)
 	}
 }
@@ -149,8 +136,8 @@ func TestResolveAfterLock_NotReadyWhenMissing(t *testing.T) {
 	}
 }
 
-func TestResolveAfterLock_NotReadyWhenURLMissing(t *testing.T) {
-	repo := newOrderStore(t, &domain.Order{OrderID: "ord-1", StripeSessionID: "cs_x"}) // no CheckoutURL
+func TestResolveAfterLock_NotReadyWhenSessionMissing(t *testing.T) {
+	repo := newOrderStore(t, &domain.Order{OrderID: "ord-1", Amount: 1}) // no StripeSessionID
 	r := NewCheckoutResolver(CheckoutResolverOptions{Repo: repo.mock}).(*checkoutResolver)
 	_, err := r.resolveAfterLock(context.Background(), "ord-1")
 	if !errors.Is(err, ErrOrderNotReady) {
@@ -160,13 +147,13 @@ func TestResolveAfterLock_NotReadyWhenURLMissing(t *testing.T) {
 
 func TestResolve_LocalLRUSecondHit(t *testing.T) {
 	r, d := newResolverWithDeps(t)
-	d.repo.byID["ord-1"] = &domain.Order{OrderID: "ord-1", CheckoutURL: "https://stripe/cached", StripeSessionID: "cs_old"}
+	d.repo.byID["ord-1"] = &domain.Order{OrderID: "ord-1", StripeSessionID: "cs_old"}
 	_, _ = r.Resolve(context.Background(), "ord-1")
 	// Second call should hit the in-process cache; we delete the DB row to
 	// prove the cache is what serves the response.
 	delete(d.repo.byID, "ord-1")
 	url, err := r.Resolve(context.Background(), "ord-1")
-	if err != nil || url != "https://stripe/cached" {
+	if err != nil || url != "https://checkout.stripe.com/c/pay/cs_old" {
 		t.Fatalf("expected lru hit; url=%q err=%v", url, err)
 	}
 }

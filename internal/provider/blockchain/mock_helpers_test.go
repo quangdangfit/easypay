@@ -27,7 +27,7 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 		s.byID[o.OrderID] = o
 	}
 	s.mock = repomock.NewMockOrderRepository(gomock.NewController(t))
-	s.mock.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	s.mock.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	s.mock.EXPECT().GetByOrderID(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, id string) (*domain.Order, error) {
 			if o, ok := s.byID[id]; ok {
@@ -35,6 +35,8 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 			}
 			return nil, repository.ErrNotFound
 		}).AnyTimes()
+	s.mock.EXPECT().GetByTransactionID(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, repository.ErrNotFound).AnyTimes()
 	s.mock.EXPECT().GetByPaymentIntentID(gomock.Any(), gomock.Any()).
 		Return(nil, repository.ErrNotFound).AnyTimes()
 	s.mock.EXPECT().UpdateStatus(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -45,9 +47,8 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 			}
 			return repository.ErrNotFound
 		}).AnyTimes()
-	s.mock.EXPECT().UpdateCheckout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	s.mock.EXPECT().UpdateCheckout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil).AnyTimes()
-	s.mock.EXPECT().BatchCreate(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	s.mock.EXPECT().GetPendingBefore(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, nil).AnyTimes()
 	return s
@@ -63,7 +64,6 @@ func newEventCapture(t *testing.T) *eventCapture {
 	t.Helper()
 	e := &eventCapture{}
 	e.mock = kafkamock.NewMockEventPublisher(gomock.NewController(t))
-	e.mock.EXPECT().PublishPaymentEvent(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	e.mock.EXPECT().PublishPaymentConfirmed(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, ev kafka.PaymentConfirmedEvent) error {
 			e.confirmed = append(e.confirmed, ev)

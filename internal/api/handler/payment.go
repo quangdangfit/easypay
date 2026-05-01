@@ -19,15 +19,20 @@ func NewPaymentHandler(svc service.Payments) *PaymentHandler {
 	return &PaymentHandler{svc: svc}
 }
 
+// createPaymentRequest is the JSON body accepted by POST /api/payments.
+//
+// MerchantOrderID is the merchant's idempotency key — typically their own
+// internal order/cart id. The gateway derives transaction_id and order_id
+// deterministically from (merchant_id, merchant_order_id), so two retries
+// with the same MerchantOrderID always collapse to the same row.
 type createPaymentRequest struct {
-	TransactionID      string   `json:"transaction_id"`
+	MerchantOrderID    string   `json:"merchant_order_id"`
 	Amount             int64    `json:"amount"`
 	Currency           string   `json:"currency"`
 	PaymentMethodTypes []string `json:"payment_method_types"`
 	CustomerEmail      string   `json:"customer_email"`
 	SuccessURL         string   `json:"success_url"`
 	CancelURL          string   `json:"cancel_url"`
-	CallbackURL        string   `json:"callback_url"`
 }
 
 // Create handles POST /api/payments. ?method=crypto routes to the on-chain flow.
@@ -44,14 +49,13 @@ func (h *PaymentHandler) Create(c *fiber.Ctx) error {
 
 	in := service.CreatePaymentInput{
 		Merchant:           merchant,
-		TransactionID:      req.TransactionID,
+		MerchantOrderID:    req.MerchantOrderID,
 		Amount:             req.Amount,
 		Currency:           req.Currency,
 		PaymentMethodTypes: req.PaymentMethodTypes,
 		CustomerEmail:      req.CustomerEmail,
 		SuccessURL:         req.SuccessURL,
 		CancelURL:          req.CancelURL,
-		CallbackURL:        firstNonEmpty(req.CallbackURL, merchant.CallbackURL),
 		Method:             c.Query("method"),
 	}
 
@@ -67,13 +71,4 @@ func (h *PaymentHandler) Create(c *fiber.Ctx) error {
 		}
 	}
 	return response.Accepted(c, res)
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }

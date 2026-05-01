@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -28,15 +27,6 @@ import (
 	"github.com/quangdangfit/easypay/pkg/logger"
 )
 
-func lookupSecretByMerchantID(ctx context.Context, db *sql.DB, merchantID string) string {
-	var secret string
-	err := db.QueryRowContext(ctx, "SELECT secret_key FROM merchants WHERE merchant_id = ? LIMIT 1", merchantID).Scan(&secret)
-	if err != nil {
-		return ""
-	}
-	return secret
-}
-
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "fatal:", err)
@@ -58,12 +48,31 @@ func run() error {
 	log := logger.L()
 	log.Info("starting easypay", "env", cfg.App.Env, "port", cfg.App.Port)
 
-	// MySQL.
+	// MySQL — primary pool for merchants + blockchain tables.
 	db, err := repository.OpenMySQL(cfg.DB)
 	if err != nil {
 		return fmt.Errorf("mysql: %w", err)
 	}
 	defer func() { _ = db.Close() }()
+
+	// MySQL — sharded pool(s) for the orders table family. Falls back to
+	// the primary pool when ORDERS_SHARD_DSNS is unset.
+	shardPools, err := repository.OpenShardPools(cfg.DB.ShardDSNs, cfg.DB)
+	if err != nil {
+		return fmt.Errorf("orders shards: %w", err)
+	}
+	defer func() {
+		// Avoid double-close when shards collocate on the primary pool.
+		seen := map[string]bool{}
+		for _, p := range shardPools {
+			key := fmt.Sprintf("%p", p)
+			if seen[key] || p == db {
+				continue
+			}
+			seen[key] = true
+			_ = p.Close()
+		}
+	}()
 
 	// Redis.
 	rc, err := cache.NewRedis(cfg.Redis)
@@ -72,16 +81,19 @@ func run() error {
 	}
 	defer func() { _ = rc.Close() }()
 
-	// Kafka producer.
+	// Kafka producer (only `payment.confirmed` is published from this app
+	// now — the write path commits to MySQL synchronously and does not fan
+	// out via Kafka).
 	publisher := kafka.NewPublisher(cfg.Kafka)
 	defer func() { _ = publisher.Close() }()
 
 	// Repos & cache helpers.
-	orderRepo := repository.NewOrderRepository(db)
+	orderRepo, err := repository.NewShardedOrderRepository(shardPools)
+	if err != nil {
+		return fmt.Errorf("sharded order repo: %w", err)
+	}
 	merchantRepo := repository.NewMerchantRepository(db)
-	idem := cache.NewIdempotency(rc)
 	rl := cache.NewRateLimiter(rc)
-	pendingOrders := cache.NewPendingOrderStore(rc)
 	locker := cache.NewLocker(rc)
 	urlCache := cache.NewURLCache(10000, 5*time.Second)
 	stripeBucket := cache.NewTokenBucket(rc, "stripe:create_session", cfg.App.StripeRateLimit, float64(cfg.App.StripeRateLimit))
@@ -99,23 +111,22 @@ func run() error {
 	stripeClient = stripe.NewBreakerClient(stripeClient, "stripe")
 
 	// Service + handlers.
-	paySvc := service.NewPaymentService(idem, stripeClient, publisher, pendingOrders, orderRepo, service.PaymentServiceOptions{
-		DefaultCurrency:   cfg.Stripe.DefaultCurrency,
-		CryptoContract:    cfg.Blockchain.ContractAddress,
-		CryptoChainID:     cfg.Blockchain.ChainID,
-		LazyCheckout:      cfg.App.LazyCheckout,
-		PublicBaseURL:     cfg.App.PublicBaseURL,
-		CheckoutSecret:    cfg.App.CheckoutTokenSecret,
-		CheckoutTokenTTL:  cfg.App.CheckoutTokenTTL,
-		DefaultSuccessURL: cfg.App.CheckoutDefaultSuccessURL,
-		DefaultCancelURL:  cfg.App.CheckoutDefaultCancelURL,
-		OrderIDSecret:     cfg.App.OrderIDSecret,
+	paySvc := service.NewPaymentService(stripeClient, orderRepo, service.PaymentServiceOptions{
+		DefaultCurrency:     cfg.Stripe.DefaultCurrency,
+		CryptoContract:      cfg.Blockchain.ContractAddress,
+		CryptoChainID:       cfg.Blockchain.ChainID,
+		LazyCheckout:        cfg.App.LazyCheckout,
+		PublicBaseURL:       cfg.App.PublicBaseURL,
+		CheckoutSecret:      cfg.App.CheckoutTokenSecret,
+		CheckoutTokenTTL:    cfg.App.CheckoutTokenTTL,
+		DefaultSuccessURL:   cfg.App.CheckoutDefaultSuccessURL,
+		DefaultCancelURL:    cfg.App.CheckoutDefaultCancelURL,
+		TransactionIDSecret: cfg.App.TransactionIDSecret,
 	})
 	webhookSvc := service.NewWebhookService(stripeClient, orderRepo, publisher, rc, cfg.Stripe.WebhookSecret)
 	checkoutResolver := service.NewCheckoutResolver(service.CheckoutResolverOptions{
 		Stripe:            stripeClient,
 		Repo:              orderRepo,
-		Pending:           pendingOrders,
 		Locker:            locker,
 		URLCache:          urlCache,
 		Bucket:            stripeBucket,
@@ -146,34 +157,28 @@ func run() error {
 		HMACSkew:      cfg.Security.HMACTimestampSkew,
 	})
 
-	// Async batch consumer for payment.events → MySQL.
+	// Settlement consumer for payment.confirmed → merchant callback.
+	// Looks up callback URL + signing secret per event so merchants can
+	// rotate either without bouncing the gateway.
 	consumerCtx, consumerCancel := context.WithCancel(context.Background())
 	defer consumerCancel()
-	paymentConsumer := consumer.NewPaymentConsumer(orderRepo).NewBatch(cfg.Kafka)
-	go func() {
-		if err := paymentConsumer.Run(consumerCtx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("payment consumer exited", "err", err)
-		}
-	}()
-
-	// Settlement consumer for payment.confirmed → merchant callback.
-	merchantSecretLookup := func(merchantID string) string {
-		// Best-effort sync lookup — settlement runs async so a 1s timeout is fine.
+	merchantLookup := func(merchantID string) consumer.MerchantCallback {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		// Repository is keyed by api_key not merchant_id; we'd ideally have
-		// a GetByMerchantID. For now we tolerate a small extra query.
-		// TODO(safety-nets phase): introduce proper GetByMerchantID.
-		return lookupSecretByMerchantID(ctx, db, merchantID)
+		m, err := merchantRepo.GetByMerchantID(ctx, merchantID)
+		if err != nil {
+			return consumer.MerchantCallback{}
+		}
+		return consumer.MerchantCallback{URL: m.CallbackURL, Secret: m.SecretKey}
 	}
-	settlementConsumer := consumer.NewSettlementConsumer(merchantSecretLookup).NewBatch(cfg.Kafka)
+	settlementConsumer := consumer.NewSettlementConsumer(merchantLookup).NewBatch(cfg.Kafka)
 	go func() {
 		if err := settlementConsumer.Run(consumerCtx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("settlement consumer exited", "err", err)
 		}
 	}()
 
-	// Order reconciliation cron (Phase 6).
+	// Order reconciliation cron.
 	orderReconciler := service.NewOrderReconciliation(orderRepo, stripeClient, publisher)
 	go func() {
 		if err := orderReconciler.Run(consumerCtx); err != nil && !errors.Is(err, context.Canceled) {
@@ -181,7 +186,7 @@ func run() error {
 		}
 	}()
 
-	// Blockchain listener (Phase 5). Only spin up if a contract address is configured.
+	// Blockchain listener. Only spin up if a contract address is configured.
 	if cfg.Blockchain.ContractAddress != "" && cfg.Blockchain.RPCWebsocket != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		chainClient, err := blockchain.NewClient(ctx, cfg.Blockchain.RPCWebsocket, cfg.Blockchain.RPCHTTP)

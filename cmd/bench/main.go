@@ -196,7 +196,7 @@ func run(cfg config) error {
 
 func doCreate(ctx context.Context, c *http.Client, cfg config, rng *rand.Rand) (orderID string, status int, err error) {
 	body := map[string]any{
-		"transaction_id":       fmt.Sprintf("BENCH-%d-%s", time.Now().UnixNano(), uuid.NewString()[:8]),
+		"merchant_order_id":    fmt.Sprintf("BENCH-%d-%s", time.Now().UnixNano(), uuid.NewString()[:8]),
 		"amount":               int64(100 + rng.Intn(99900)), // $1.00 - $1000
 		"currency":             "USD",
 		"payment_method_types": []string{"card"},

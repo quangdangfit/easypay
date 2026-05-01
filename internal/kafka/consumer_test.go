@@ -11,9 +11,9 @@ import (
 	"github.com/quangdangfit/easypay/internal/config"
 )
 
-// noopHandler is a tiny in-package BatchHandler. We can't use kafkamock here
-// because that package imports internal/kafka (for PaymentEvent), which would
-// create an import cycle for tests in package kafka itself.
+// noopHandler is a tiny in-package BatchHandler. kafkamock can't be used here
+// because that package imports internal/kafka, which creates an import cycle
+// for tests in the kafka package itself.
 type noopHandler struct{}
 
 func (noopHandler) Handle(context.Context, []kafkago.Message) error  { return nil }
@@ -22,7 +22,6 @@ func (noopHandler) HandleOne(context.Context, kafkago.Message) error { return ni
 func testCfg() config.KafkaConfig {
 	return config.KafkaConfig{
 		Brokers:        []string{"127.0.0.1:1"},
-		TopicEvents:    "evt",
 		TopicConfirmed: "cfm",
 		TopicDLQ:       "dlq",
 		ConsumerGroup:  "test",

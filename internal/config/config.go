@@ -42,19 +42,22 @@ type AppConfig struct {
 	// these for `mode=payment` Checkout Sessions.
 	CheckoutDefaultSuccessURL string
 	CheckoutDefaultCancelURL  string
-	// OrderIDSecret derives order_id deterministically as
-	// HMAC-SHA256(secret, "<merchant_id>:<transaction_id>"). Concurrent
-	// Create calls for the same idempotency key collapse to the same
-	// order_id, so Redis SETNX, Stripe's Idempotency-Key, and the MySQL
-	// uniq_merchant_txn index all dedupe along the same identity. When
-	// empty, falls back to random UUIDs (legacy behaviour, races possible).
-	OrderIDSecret string
+	// TransactionIDSecret keys the HMAC that turns
+	// (merchant_id, merchant_order_id) into the deterministic 16-byte
+	// transaction_id and 12-byte order_id (with shard byte). The MySQL
+	// UNIQUE on (merchant_id, transaction_id) is the single dedupe layer,
+	// so this secret is required.
+	TransactionIDSecret string
 }
 
 type DBConfig struct {
 	DSN          string
 	MaxOpenConns int
 	MaxIdleConns int
+	// ShardDSNs, when non-empty, overrides DSN for the orders sharded repo.
+	// Either 1 entry (single MySQL hosts all 16 shard tables) or exactly
+	// ShardCount entries (one per shard).
+	ShardDSNs []string
 }
 
 type RedisConfig struct {
@@ -65,7 +68,6 @@ type RedisConfig struct {
 
 type KafkaConfig struct {
 	Brokers        []string
-	TopicEvents    string
 	TopicConfirmed string
 	TopicDLQ       string
 	ConsumerGroup  string
@@ -113,12 +115,13 @@ func Load() (*Config, error) {
 			StripeRateLimit:           getenvInt("STRIPE_RATE_LIMIT", 80),
 			CheckoutDefaultSuccessURL: getenv("CHECKOUT_DEFAULT_SUCCESS_URL", publicBase+"/checkout/success"),
 			CheckoutDefaultCancelURL:  getenv("CHECKOUT_DEFAULT_CANCEL_URL", publicBase+"/checkout/cancel"),
-			OrderIDSecret:             getenv("ORDER_ID_SECRET", ""),
+			TransactionIDSecret:       getenv("TRANSACTION_ID_SECRET", ""),
 		},
 		DB: DBConfig{
 			DSN:          mustGetenv("DB_DSN"),
 			MaxOpenConns: getenvInt("DB_MAX_OPEN_CONNS", 100),
 			MaxIdleConns: getenvInt("DB_MAX_IDLE_CONNS", 25),
+			ShardDSNs:    splitNonEmpty(getenv("ORDERS_SHARD_DSNS", "")),
 		},
 		Redis: RedisConfig{
 			Addr:     getenv("REDIS_ADDR", "localhost:6379"),
@@ -127,9 +130,8 @@ func Load() (*Config, error) {
 		},
 		Kafka: KafkaConfig{
 			Brokers:        strings.Split(getenv("KAFKA_BROKERS", "localhost:9092"), ","),
-			TopicEvents:    getenv("KAFKA_TOPIC_EVENTS", "payment.events"),
 			TopicConfirmed: getenv("KAFKA_TOPIC_CONFIRMED", "payment.confirmed"),
-			TopicDLQ:       getenv("KAFKA_TOPIC_DLQ", "payment.events.dlq"),
+			TopicDLQ:       getenv("KAFKA_TOPIC_DLQ", "payment.confirmed.dlq"),
 			ConsumerGroup:  getenv("KAFKA_CONSUMER_GROUP", "payment-engine"),
 		},
 		Stripe: StripeConfig{
@@ -215,6 +217,22 @@ func nonNegUint64(v int) uint64 {
 		return 0
 	}
 	return uint64(v)
+}
+
+// splitNonEmpty splits s on commas and drops empty entries.
+func splitNonEmpty(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := parts[:0]
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func getenvBool(key string, def bool) bool {
