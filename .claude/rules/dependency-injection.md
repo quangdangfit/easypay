@@ -84,39 +84,6 @@ consumer, …):
 
 ## Reference layout
 
-```go
-// internal/cache/lock.go
-type Locker interface {
-    Acquire(ctx context.Context, key string, ttl time.Duration) (Lock, error)
-}
-type Lock interface {
-    Release(ctx context.Context) error
-}
-
-type redisLocker struct{ rc *redis.Client }
-type redisLock   struct{ rc *redis.Client; key, token string }
-
-func NewLocker(rc *redis.Client) Locker { return &redisLocker{rc: rc} }
-
-func (l *redisLocker) Acquire(...) (Lock, error) { ... }
-func (lk *redisLock)  Release(...) error         { ... }
-```
-
-```go
-// internal/api/handler/checkout.go
-type CheckoutHandler struct {
-    resolver service.Checkouts   // not *service.checkoutResolver
-}
-
-func NewCheckoutHandler(r service.Checkouts, ...) *CheckoutHandler { ... }
-```
-
-```go
-// cmd/server/main.go — the only place that wires concretes
-locker := cache.NewLocker(rc)
-resolver := service.NewCheckoutResolver(service.CheckoutResolverOptions{
-    Locker: locker,
-    ...
-})
-checkoutH := handler.NewCheckoutHandler(resolver, secret)
-```
+For a worked example see `internal/cache/lock.go` (interface + unexported
+impl), `internal/api/handler/checkout.go` (consumer keeps interface field),
+and `cmd/server/main.go` (single place that wires concretes).
