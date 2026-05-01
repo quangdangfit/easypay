@@ -27,40 +27,23 @@ func TestReconciliationCron(t *testing.T) {
 
 	orderRepo := repository.NewOrderRepository(env.DB)
 
-	// Seed a 'pending' order with a backdated created_at. We rely on the
-	// reconciler's StuckAfter knob to consider it stuck — backdating the row
-	// in DB sidesteps the production 10-minute wait.
-	stuck := &domain.Order{
-		OrderID:               "ord-recon-1",
-		MerchantID:            "M_RECON",
-		TransactionID:         "TXN-RECON-1",
-		Amount:                2500,
-		Currency:              "USD",
-		Status:                domain.OrderStatusPending,
-		StripePaymentIntentID: "pi_recon_1",
-		CallbackURL:           "https://merchant.test/cb",
-	}
-	if err := orderRepo.Create(context.Background(), stuck); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	// Force created_at to 1h ago so the order is "stuck".
-	if _, err := env.DB.ExecContext(context.Background(),
-		`UPDATE orders SET created_at = ? WHERE order_id = ?`,
-		time.Now().Add(-time.Hour), stuck.OrderID); err != nil {
-		t.Fatalf("backdate: %v", err)
-	}
+	const merchantID = "M_RECON"
+	stuck := SeedOrder(t, orderRepo, merchantID, "RECON-1", 2500, domain.OrderStatusPending, func(o *domain.Order) {
+		o.StripePaymentIntentID = "pi_recon_1"
+	})
+	// Backdate created_at so the reconciler considers the row stuck.
+	BackdateOrder(t, env.DB, merchantID, stuck.OrderID, time.Hour)
 
 	mock := NewMockStripe()
 
 	kafkaCfg := config.KafkaConfig{
 		Brokers:        env.KafkaBrokers,
-		TopicEvents:    "payment.events.recon",
 		TopicConfirmed: "payment.confirmed.recon",
-		TopicDLQ:       "payment.events.dlq.recon",
+		TopicDLQ:       "payment.confirmed.dlq.recon",
 		ConsumerGroup:  "recon-group",
 	}
 	publisher := kafka.NewPublisher(kafkaCfg)
-	defer publisher.Close()
+	defer func() { _ = publisher.Close() }()
 
 	reconciler := service.NewOrderReconciliationWithOptions(
 		orderRepo, mock, publisher,
@@ -97,10 +80,6 @@ func TestReconciliationCron(t *testing.T) {
 		close(done)
 	}()
 
-	// Read until we see our event. The reconciler publishes AFTER UpdateStatus
-	// succeeds, so by the time the event lands the order must already be paid.
-	// Keep the reconciler running until then — cancelling early can interrupt
-	// the in-flight publish on slow CI brokers.
 	found := false
 	deadline := time.Now().Add(20 * time.Second)
 	for !found && time.Now().Before(deadline) {

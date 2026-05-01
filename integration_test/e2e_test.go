@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quangdangfit/easypay/internal/cache"
 	"github.com/quangdangfit/easypay/internal/config"
 	"github.com/quangdangfit/easypay/internal/consumer"
 	"github.com/quangdangfit/easypay/internal/domain"
@@ -25,12 +24,12 @@ import (
 // TestFullPaymentFlow_E2E walks the entire pipeline against real
 // MySQL/Redis/Kafka:
 //
-//  1. PaymentService.Create → publishes to payment.events.
-//  2. PaymentConsumer drains the topic and batch-inserts into MySQL.
-//  3. WebhookService.Process (driven by a synthesised payment_intent.succeeded
+//  1. PaymentService.Create — sync write to MySQL, Stripe session created.
+//  2. WebhookService.Process (driven by a synthesised payment_intent.succeeded
 //     event) flips the order to 'paid' and publishes to payment.confirmed.
-//  4. SettlementConsumer drains payment.confirmed and POSTs to the merchant
-//     callback URL — backed here by an httptest.NewServer that records hits.
+//  3. SettlementConsumer drains payment.confirmed, looks up the merchant's
+//     callback URL + signing secret on the merchants row, and POSTs to the
+//     merchant — backed here by an httptest.NewServer that records hits.
 //
 // If this test passes, every wire between the components is good.
 func TestFullPaymentFlow_E2E(t *testing.T) {
@@ -38,9 +37,8 @@ func TestFullPaymentFlow_E2E(t *testing.T) {
 	defer env.Cleanup(t)
 
 	const (
-		merchantID    = "M_E2E"
-		merchantSec   = "merchant-secret-e2e"
-		transactionID = "TXN-E2E-1"
+		merchantID  = "M_E2E"
+		merchantSec = "merchant-secret-e2e"
 	)
 
 	// Merchant callback receiver — the last hop in the pipeline.
@@ -54,63 +52,61 @@ func TestFullPaymentFlow_E2E(t *testing.T) {
 	}))
 	defer merchantSrv.Close()
 
-	// Wire the kafka topology with E2E-suffixed topics so we don't collide
-	// with sibling tests.
+	// Seed the merchant row so the settlement consumer can resolve callback
+	// URL + secret.
+	SeedMerchant(t, env.DB, merchantID, merchantSec, merchantSrv.URL)
+
 	kafkaCfg := config.KafkaConfig{
 		Brokers:        env.KafkaBrokers,
-		TopicEvents:    "payment.events.e2e",
 		TopicConfirmed: "payment.confirmed.e2e",
-		TopicDLQ:       "payment.events.dlq.e2e",
+		TopicDLQ:       "payment.confirmed.dlq.e2e",
 		ConsumerGroup:  "e2e-group",
 	}
 	publisher := kafka.NewPublisher(kafkaCfg)
-	defer publisher.Close()
+	defer func() { _ = publisher.Close() }()
 
 	orderRepo := repository.NewOrderRepository(env.DB)
-	idem := cache.NewIdempotency(env.Redis)
+	merchantRepo := repository.NewMerchantRepository(env.DB)
 	stripeMock := NewMockStripe()
 
-	paySvc := service.NewPaymentService(idem, stripeMock, publisher, nil, service.PaymentServiceOptions{
-		DefaultCurrency: "USD",
-		CryptoContract:  "0xCONTRACT",
-		CryptoChainID:   11155111,
+	paySvc := service.NewPaymentService(stripeMock, orderRepo, service.PaymentServiceOptions{
+		DefaultCurrency:     "USD",
+		CryptoContract:      "0xCONTRACT",
+		CryptoChainID:       11155111,
+		TransactionIDSecret: txnSecretForTests,
 	})
 	webhookSvc := service.NewWebhookService(stripeMock, orderRepo, publisher, env.Redis, webhookSecret)
 
-	// Boot the two consumers in their own goroutines for the duration of the
-	// test. SettlementConsumer needs to look up the merchant secret to sign
-	// the outbound POST — we provide a closure for the single test merchant.
-	pc := consumer.NewPaymentConsumer(orderRepo).NewBatch(kafkaCfg)
-	pc.BatchSize = 5
-	pc.BatchWait = 200 * time.Millisecond
-
-	sc := consumer.NewSettlementConsumer(func(mid string) string {
-		if mid == merchantID {
-			return merchantSec
+	// Settlement consumer looks up the merchant per event.
+	lookup := func(mid string) consumer.MerchantCallback {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		m, err := merchantRepo.GetByMerchantID(ctx, mid)
+		if err != nil {
+			return consumer.MerchantCallback{}
 		}
-		return ""
-	}).NewBatch(kafkaCfg)
+		return consumer.MerchantCallback{URL: m.CallbackURL, Secret: m.SecretKey}
+	}
+	sc := consumer.NewSettlementConsumer(lookup).NewBatch(kafkaCfg)
 	sc.BatchSize = 5
 	sc.BatchWait = 200 * time.Millisecond
 
-	consumerCtx, stopConsumers := context.WithCancel(context.Background())
+	consumerCtx, stopConsumer := context.WithCancel(context.Background())
 	var consumerWG sync.WaitGroup
-	consumerWG.Add(2)
-	go func() { defer consumerWG.Done(); _ = pc.Run(consumerCtx) }()
+	consumerWG.Add(1)
 	go func() { defer consumerWG.Done(); _ = sc.Run(consumerCtx) }()
 	defer func() {
-		stopConsumers()
+		stopConsumer()
 		consumerWG.Wait()
 	}()
 
 	// ── Step 1: Create payment ──────────────────────────────────────────
 	merchant := &domain.Merchant{MerchantID: merchantID, SecretKey: merchantSec, RateLimit: 100}
 	res, err := paySvc.Create(context.Background(), service.CreatePaymentInput{
-		Merchant:      merchant,
-		TransactionID: transactionID,
-		Amount:        2500,
-		Currency:      "USD",
-		CallbackURL:   merchantSrv.URL,
+		Merchant:        merchant,
+		MerchantOrderID: "E2E-1",
+		Amount:          2500,
+		Currency:        "USD",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -119,25 +115,16 @@ func TestFullPaymentFlow_E2E(t *testing.T) {
 		t.Fatalf("bad result: %+v", res)
 	}
 
-	// ── Step 2: Wait for the consumer to land the row in MySQL ──────────
-	deadline := time.Now().Add(20 * time.Second)
-	var landed *domain.Order
-	for time.Now().Before(deadline) {
-		o, err := orderRepo.GetByOrderID(context.Background(), res.OrderID)
-		if err == nil {
-			landed = o
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
+	// ── Step 2: Row must be in MySQL synchronously ──────────────────────
+	landed, err := orderRepo.GetByOrderID(context.Background(), res.OrderID)
+	if err != nil {
+		t.Fatalf("order %s not found after Create: %v", res.OrderID, err)
 	}
-	if landed == nil {
-		t.Fatalf("order %s never reached MySQL", res.OrderID)
+	if landed.Status != domain.OrderStatusCreated {
+		t.Fatalf("status: got %s want created", landed.Status)
 	}
-	if landed.Status != domain.OrderStatusPending {
-		t.Fatalf("status: got %s want pending", landed.Status)
-	}
-	if landed.CallbackURL != merchantSrv.URL {
-		t.Fatalf("callback_url not persisted: got %q", landed.CallbackURL)
+	if landed.StripeSessionID == "" {
+		t.Fatalf("Stripe session not persisted: %+v", landed)
 	}
 
 	// ── Step 3: Synthesize the Stripe webhook and process it ────────────
@@ -154,7 +141,7 @@ func TestFullPaymentFlow_E2E(t *testing.T) {
 	}
 
 	// ── Step 4: SettlementConsumer should POST to the merchant callback ─
-	deadline = time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if callbackHits.Load() >= 1 {
 			break
