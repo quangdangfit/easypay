@@ -7,9 +7,9 @@ microservices. All cross-package calls are in-process. Kafka carries
 terminal-state notifications only (`payment.confirmed`); the write path
 is sync MySQL.
 
-For setup, env vars, and full DB schema see `README.md`, `.env.example`, and
-`migrations/`. This file is the architectural source of truth — keep it
-under ~300 lines.
+For setup, configuration, and full DB schema see `README.md`,
+`config.yaml.example`, and `migrations/`. This file is the architectural
+source of truth — keep it under ~300 lines.
 
 ## Tech Stack
 

@@ -28,7 +28,6 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
-	"github.com/joho/godotenv"
 
 	"github.com/quangdangfit/easypay/pkg/hmac"
 )
@@ -48,8 +47,6 @@ type config struct {
 }
 
 func main() {
-	_ = godotenv.Load()
-
 	cfg := parseFlags()
 	if err := run(cfg); err != nil {
 		log.Fatalf("bench: %v", err)

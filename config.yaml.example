@@ -1,0 +1,79 @@
+# Easypay payment gateway — example config.
+# Copy to config.yaml and fill in real values.
+#   cp config.yaml.example config.yaml
+# Run:
+#   ./easypay --config config.yaml
+
+app:
+  env: development
+  port: 8080
+  log_level: info
+  # Externally-reachable origin of this service. Used to mint hosted-checkout
+  # URLs when lazy_checkout is true and as the default for the success/cancel
+  # URLs below.
+  public_base_url: http://localhost:8080
+  # When true, POST /api/payments returns a self-hosted checkout URL and the
+  # Stripe Session is created on-demand the first time it is opened.
+  lazy_checkout: false
+  # HMAC secret that signs /pay/:id?t=<token> URLs. Leave empty in dev to
+  # disable token verification.
+  checkout_token_secret: ""
+  # How long a hosted-checkout URL stays valid (Go duration: 24h, 30m, ...).
+  checkout_token_ttl: 24h
+  # Caps Stripe SDK calls fleet-wide via a Redis token bucket.
+  stripe_rate_limit: 80
+  # Default success/cancel URLs when the merchant doesn't supply per-payment
+  # ones. Falls back to public_base_url + /checkout/{success,cancel}.
+  checkout_default_success_url: ""
+  checkout_default_cancel_url: ""
+  # Number of logical merchant shards (1..255). Today every shard lives on
+  # the single transactions table; future deployments can partition by
+  # merchants.shard_index without changing application code.
+  logical_shard_count: 16
+
+db:
+  # MySQL DSN — must include parseTime=true&clientFoundRows=true.
+  dsn: "root:password@tcp(localhost:3306)/payments?parseTime=true&clientFoundRows=true"
+  max_open_conns: 100
+  max_idle_conns: 25
+
+redis:
+  addr: localhost:6379
+  password: ""
+  db: 0
+
+kafka:
+  brokers:
+    - localhost:9092
+  topic_confirmed: payment.confirmed
+  topic_dlq: payment.confirmed.dlq
+  consumer_group: payment-engine
+
+stripe:
+  # mode=live hits api.stripe.com; mode=fake uses an in-process synthetic
+  # client (load tests, local e2e). Set to "fake" to skip secret_key /
+  # webhook_secret requirements.
+  mode: live
+  secret_key: "sk_test_your_stripe_secret_key_here"
+  publishable_key: "pk_test_your_stripe_publishable_key_here"
+  webhook_secret: "whsec_your_webhook_signing_secret_here"
+  api_version: "2024-06-20"
+  default_currency: USD
+
+blockchain:
+  # Leave contract_address or rpc_websocket empty to disable the blockchain
+  # listener entirely.
+  rpc_websocket: ""
+  rpc_http: ""
+  contract_address: ""
+  chain_id: 11155111
+  required_confirmations: 12
+  start_block: 0
+
+security:
+  # Merchant request HMAC. MUST be at least 16 chars.
+  hmac_secret: "change-me-this-is-at-least-16-chars"
+  hmac_timestamp_skew: 5m
+  # When set, mounts /admin/* routes (e.g. POST /admin/merchants) gated by
+  # X-Admin-Key. Leave empty to disable admin endpoints.
+  admin_api_key: ""

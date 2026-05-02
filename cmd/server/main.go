@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -10,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/joho/godotenv"
 
 	"github.com/ethereum/go-ethereum/common"
 
@@ -35,11 +35,10 @@ func main() {
 }
 
 func run() error {
-	// Best-effort load of .env (dev convenience). Real envs use the platform's
-	// secret manager; we don't error if the file is absent.
-	_ = godotenv.Load()
+	configPath := flag.String("config", "config.yaml", "path to YAML config file")
+	flag.Parse()
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(*configPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
