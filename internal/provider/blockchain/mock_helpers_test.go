@@ -28,7 +28,14 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 	}
 	s.mock = repomock.NewMockOrderRepository(gomock.NewController(t))
 	s.mock.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	s.mock.EXPECT().GetByOrderID(gomock.Any(), gomock.Any()).
+	s.mock.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, id string) (*domain.Order, error) {
+			if o, ok := s.byID[id]; ok {
+				return o, nil
+			}
+			return nil, repository.ErrNotFound
+		}).AnyTimes()
+	s.mock.EXPECT().GetByOrderIDAny(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, id string) (*domain.Order, error) {
 			if o, ok := s.byID[id]; ok {
 				return o, nil
@@ -39,15 +46,15 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 		Return(nil, repository.ErrNotFound).AnyTimes()
 	s.mock.EXPECT().GetByPaymentIntentID(gomock.Any(), gomock.Any()).
 		Return(nil, repository.ErrNotFound).AnyTimes()
-	s.mock.EXPECT().UpdateStatus(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, id string, st domain.OrderStatus, _ string) error {
+	s.mock.EXPECT().UpdateStatus(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ string, id string, st domain.OrderStatus, _ string) error {
 			if o, ok := s.byID[id]; ok {
 				o.Status = st
 				return nil
 			}
 			return repository.ErrNotFound
 		}).AnyTimes()
-	s.mock.EXPECT().UpdateCheckout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	s.mock.EXPECT().UpdateCheckout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil).AnyTimes()
 	s.mock.EXPECT().GetPendingBefore(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, nil).AnyTimes()
@@ -75,48 +82,48 @@ func newEventCapture(t *testing.T) *eventCapture {
 
 // pendingTxStore wires a MockPendingTxRepository backed by a map.
 type pendingTxStore struct {
-	byHash    map[string]*domain.PendingTx
+	byHash    map[string]*domain.OnchainTransaction
 	createErr error
-	mock      *repomock.MockPendingTxRepository
+	mock      *repomock.MockOnchainTxRepository
 }
 
 func newPendingTxStore(t *testing.T) *pendingTxStore {
 	t.Helper()
-	s := &pendingTxStore{byHash: map[string]*domain.PendingTx{}}
-	s.mock = repomock.NewMockPendingTxRepository(gomock.NewController(t))
+	s := &pendingTxStore{byHash: map[string]*domain.OnchainTransaction{}}
+	s.mock = repomock.NewMockOnchainTxRepository(gomock.NewController(t))
 	s.mock.EXPECT().Create(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, tx *domain.PendingTx) error {
+		DoAndReturn(func(_ context.Context, tx *domain.OnchainTransaction) error {
 			if s.createErr != nil {
 				return s.createErr
 			}
 			if _, exists := s.byHash[tx.TxHash]; exists {
-				return repository.ErrPendingTxNotFound
+				return repository.ErrOnchainTxNotFound
 			}
 			s.byHash[tx.TxHash] = tx
 			return nil
 		}).AnyTimes()
 	s.mock.EXPECT().GetByTxHash(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, hash string) (*domain.PendingTx, error) {
+		DoAndReturn(func(_ context.Context, hash string) (*domain.OnchainTransaction, error) {
 			if tx, ok := s.byHash[hash]; ok {
 				return tx, nil
 			}
-			return nil, repository.ErrPendingTxNotFound
+			return nil, repository.ErrOnchainTxNotFound
 		}).AnyTimes()
 	s.mock.EXPECT().UpdateConfirmations(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, hash string, conf uint64, st domain.PendingTxStatus) error {
+		DoAndReturn(func(_ context.Context, hash string, conf uint64, st domain.OnchainTxStatus) error {
 			tx, ok := s.byHash[hash]
 			if !ok {
-				return repository.ErrPendingTxNotFound
+				return repository.ErrOnchainTxNotFound
 			}
 			tx.Confirmations = conf
 			tx.Status = st
 			return nil
 		}).AnyTimes()
 	s.mock.EXPECT().ListPendingByChain(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, chainID int64, limit int) ([]*domain.PendingTx, error) {
-			out := make([]*domain.PendingTx, 0)
+		DoAndReturn(func(_ context.Context, chainID int64, limit int) ([]*domain.OnchainTransaction, error) {
+			out := make([]*domain.OnchainTransaction, 0)
 			for _, tx := range s.byHash {
-				if tx.ChainID == chainID && tx.Status == domain.PendingTxStatusPending {
+				if tx.ChainID == chainID && tx.Status == domain.OnchainTxStatusPending {
 					out = append(out, tx)
 					if len(out) >= limit {
 						break

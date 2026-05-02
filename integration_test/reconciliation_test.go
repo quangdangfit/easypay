@@ -101,7 +101,7 @@ func TestReconciliationCron(t *testing.T) {
 		t.Fatal("payment.confirmed event for reconciled order not found")
 	}
 
-	o, err := orderRepo.GetByOrderID(context.Background(), stuck.OrderID)
+	o, err := orderRepo.GetByMerchantOrderID(context.Background(), stuck.MerchantID, stuck.OrderID)
 	if err != nil {
 		t.Fatalf("read order: %v", err)
 	}

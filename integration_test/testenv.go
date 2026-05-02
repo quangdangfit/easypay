@@ -4,10 +4,7 @@ package integration
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,13 +20,8 @@ import (
 
 	"github.com/quangdangfit/easypay/internal/domain"
 	"github.com/quangdangfit/easypay/internal/repository"
+	"github.com/quangdangfit/easypay/internal/service"
 )
-
-// txnSecretForTests is the HMAC key the integration suite uses to derive
-// transaction_id and order_id from a (merchant_id, slug) pair. Tests that
-// stand up a payment service should reuse this value so the IDs stay
-// stable across the suite.
-const txnSecretForTests = "integration-test-transaction-id-secret"
 
 // TestEnv holds connections to dockerised dependencies for integration tests.
 // Use SetupEnv to spin everything up; defer Cleanup to tear it down.
@@ -152,35 +144,22 @@ func runMigrations(db *sql.DB) error {
 	return nil
 }
 
-// DeriveIDs returns the (transaction_id, order_id) pair for a slug, matching
-// payment_service.deriveIDs verbatim. Tests can use this to seed a row whose
-// IDs will line up with what the service would derive for the same input.
-func DeriveIDs(merchantID, slug string) (txnHex, orderHex string) {
-	h := hmac.New(sha256.New, []byte(txnSecretForTests))
-	h.Write([]byte(merchantID))
-	h.Write([]byte{':'})
-	h.Write([]byte(slug))
-	sum := h.Sum(nil)
-
-	txn := make([]byte, 16)
-	copy(txn, sum[:16])
-
-	ord := make([]byte, 12)
-	ord[0] = repository.ShardOf(merchantID)
-	copy(ord[1:], txn[1:12])
-
-	return hex.EncodeToString(txn), hex.EncodeToString(ord)
+// DeriveTransactionID matches payment_service.DeriveTransactionID — tests
+// that seed orders with the same (merchant_id, order_id) the service would
+// see can use this to compute the matching transaction_id.
+func DeriveTransactionID(merchantID, orderID string) string {
+	return service.DeriveTransactionID(merchantID, orderID)
 }
 
-// SeedOrder creates a row via the sharded repo using deterministic IDs.
-// Returns the persisted row so callers don't have to re-derive the IDs.
-func SeedOrder(t *testing.T, repo repository.OrderRepository, merchantID, slug string, amount int64, status domain.OrderStatus, opts ...func(*domain.Order)) *domain.Order {
+// SeedOrder inserts a row with deterministic transaction_id derived from
+// (merchant_id, order_id). The order_id is merchant-supplied, so callers
+// pass it verbatim.
+func SeedOrder(t *testing.T, repo repository.OrderRepository, merchantID, orderID string, amount int64, status domain.OrderStatus, opts ...func(*domain.Order)) *domain.Order {
 	t.Helper()
-	txn, ord := DeriveIDs(merchantID, slug)
 	o := &domain.Order{
 		MerchantID:    merchantID,
-		TransactionID: txn,
-		OrderID:       ord,
+		TransactionID: DeriveTransactionID(merchantID, orderID),
+		OrderID:       orderID,
 		Amount:        amount,
 		Currency:      "USD",
 		Status:        status,
@@ -190,17 +169,19 @@ func SeedOrder(t *testing.T, repo repository.OrderRepository, merchantID, slug s
 		f(o)
 	}
 	if err := repo.Insert(context.Background(), o); err != nil {
-		t.Fatalf("seed order %s: %v", slug, err)
+		t.Fatalf("seed order %s: %v", orderID, err)
 	}
 	return o
 }
 
 // SeedMerchant inserts (or upserts) a merchant row so callback lookups
 // resolve. Most integration tests don't need this, but the e2e flow does.
+// shard_index defaults to 0 — sufficient since today's transactions table
+// is unsharded physically.
 func SeedMerchant(t *testing.T, db *sql.DB, merchantID, secretKey, callbackURL string) {
 	t.Helper()
-	const q = `INSERT INTO merchants (merchant_id, name, api_key, secret_key, callback_url, rate_limit, status)
-	           VALUES (?, ?, ?, ?, ?, 1000, 'active')
+	const q = `INSERT INTO merchants (merchant_id, name, api_key, secret_key, callback_url, rate_limit, status, shard_index)
+	           VALUES (?, ?, ?, ?, ?, 1000, 'active', 0)
 	           ON DUPLICATE KEY UPDATE
 	             secret_key = VALUES(secret_key),
 	             callback_url = VALUES(callback_url),
@@ -211,22 +192,16 @@ func SeedMerchant(t *testing.T, db *sql.DB, merchantID, secretKey, callbackURL s
 	}
 }
 
-// BackdateOrder rewrites an order's created_at on its shard so the
-// reconciliation cron's "stuck" predicate fires without a real wait.
-// Used by reconciliation_test.go.
-func BackdateOrder(t *testing.T, db *sql.DB, merchantID, orderHex string, age time.Duration) {
+// BackdateOrder rewrites an order's created_at so the reconciliation cron's
+// "stuck" predicate fires without a real wait. Used by reconciliation_test.go.
+func BackdateOrder(t *testing.T, db *sql.DB, merchantID, orderID string, age time.Duration) {
 	t.Helper()
-	shard := repository.ShardOf(merchantID)
-	ord, err := hex.DecodeString(orderHex)
-	if err != nil {
-		t.Fatalf("decode order_id: %v", err)
-	}
 	created := time.Now().Add(-age).Unix()
 	if created < 0 {
 		created = 0
 	}
-	q := "UPDATE " + repository.ShardTable(shard) + " SET created_at = ? WHERE order_id = ?"
-	if _, err := db.ExecContext(context.Background(), q, uint32(created), ord); err != nil {
+	q := "UPDATE transactions SET created_at = ? WHERE merchant_id = ? AND order_id = ?"
+	if _, err := db.ExecContext(context.Background(), q, uint32(created), []byte(merchantID), orderID); err != nil {
 		t.Fatalf("backdate order: %v", err)
 	}
 }

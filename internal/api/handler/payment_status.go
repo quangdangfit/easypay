@@ -47,16 +47,12 @@ func (h *PaymentStatusHandler) Get(c *fiber.Ctx) error {
 		return response.Unauthorized(c, "missing_merchant", "merchant not authenticated")
 	}
 
-	order, err := h.repo.GetByOrderID(c.UserContext(), id)
+	order, err := h.repo.GetByMerchantOrderID(c.UserContext(), merchant.MerchantID, id)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
+		if errors.Is(err, repository.ErrNotFound) || errors.Is(err, domain.ErrInvalidOrderID) {
 			return response.Fail(c, fiber.StatusNotFound, "not_found", "order not found")
 		}
 		return response.InternalError(c, "lookup_failed", err.Error())
-	}
-	if order.MerchantID != merchant.MerchantID {
-		// Don't leak existence — same code as not found.
-		return response.Fail(c, fiber.StatusNotFound, "not_found", "order not found")
 	}
 
 	out := paymentStatusResponse{

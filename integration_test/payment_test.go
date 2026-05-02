@@ -25,15 +25,14 @@ func TestCreateOrder_HappyPath(t *testing.T) {
 	orderRepo := repository.NewOrderRepository(env.DB)
 
 	svc := service.NewPaymentService(stripeMock, orderRepo, service.PaymentServiceOptions{
-		DefaultCurrency:     "USD",
-		CryptoContract:      "0xCONTRACT",
-		CryptoChainID:       11155111,
-		TransactionIDSecret: txnSecretForTests,
+		DefaultCurrency: "USD",
+		CryptoContract:  "0xCONTRACT",
+		CryptoChainID:   11155111,
 	})
 
 	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s", RateLimit: 100}
 	res, err := svc.Create(context.Background(), service.CreatePaymentInput{
-		Merchant: merchant, MerchantOrderID: "ORDER-INT-1", Amount: 1500, Currency: "USD",
+		Merchant: merchant, OrderID: "ORDER-INT-1", Amount: 1500, Currency: "USD",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -43,7 +42,7 @@ func TestCreateOrder_HappyPath(t *testing.T) {
 	}
 
 	// Row must exist immediately after Create returns — sync write.
-	o, err := orderRepo.GetByOrderID(context.Background(), res.OrderID)
+	o, err := orderRepo.GetByMerchantOrderID(context.Background(), merchant.MerchantID, res.OrderID)
 	if err != nil {
 		t.Fatalf("get order after Create: %v", err)
 	}
@@ -68,14 +67,13 @@ func TestIdempotency_DuplicateOrder(t *testing.T) {
 	orderRepo := repository.NewOrderRepository(env.DB)
 
 	svc := service.NewPaymentService(stripeMock, orderRepo, service.PaymentServiceOptions{
-		DefaultCurrency:     "USD",
-		CryptoContract:      "0xCONTRACT",
-		CryptoChainID:       11155111,
-		TransactionIDSecret: txnSecretForTests,
+		DefaultCurrency: "USD",
+		CryptoContract:  "0xCONTRACT",
+		CryptoChainID:   11155111,
 	})
 	merchant := &domain.Merchant{MerchantID: "M_IDEM", SecretKey: "s", RateLimit: 100}
 	in := service.CreatePaymentInput{
-		Merchant: merchant, MerchantOrderID: "ORDER-DUPE", Amount: 999, Currency: "USD",
+		Merchant: merchant, OrderID: "ORDER-DUPE", Amount: 999, Currency: "USD",
 	}
 
 	first, err := svc.Create(context.Background(), in)
@@ -98,7 +96,7 @@ func TestIdempotency_DuplicateOrder(t *testing.T) {
 }
 
 // TestConcurrentCreate_Real exercises the strong consistency guarantee:
-// 32 goroutines hammer Create with the same MerchantOrderID; the MySQL
+// 32 goroutines hammer Create with the same OrderID; the MySQL
 // UNIQUE on (merchant_id, transaction_id) ensures exactly one INSERT
 // wins, the others fall back to GetByTransactionID and reconstruct the
 // winner's response.
@@ -110,12 +108,11 @@ func TestConcurrentCreate_Real(t *testing.T) {
 	orderRepo := repository.NewOrderRepository(env.DB)
 
 	svc := service.NewPaymentService(stripeMock, orderRepo, service.PaymentServiceOptions{
-		DefaultCurrency:     "USD",
-		TransactionIDSecret: txnSecretForTests,
+		DefaultCurrency: "USD",
 	})
 	merchant := &domain.Merchant{MerchantID: "M_CONC"}
 	in := service.CreatePaymentInput{
-		Merchant: merchant, MerchantOrderID: "ORDER-CONC", Amount: 2500, Currency: "USD",
+		Merchant: merchant, OrderID: "ORDER-CONC", Amount: 2500, Currency: "USD",
 	}
 
 	const N = 32
@@ -155,7 +152,7 @@ func TestConcurrentCreate_Real(t *testing.T) {
 	}
 
 	// Exactly one row in DB.
-	got, err := orderRepo.GetByOrderID(context.Background(), first.OrderID)
+	got, err := orderRepo.GetByMerchantOrderID(context.Background(), merchant.MerchantID, first.OrderID)
 	if err != nil {
 		t.Fatalf("read winner row: %v", err)
 	}

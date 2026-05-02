@@ -20,13 +20,13 @@ import (
 type Reconciler struct {
 	Client     ChainClient
 	Cfg        ChainConfig
-	PendingTxs repository.PendingTxRepository
+	PendingTxs repository.OnchainTxRepository
 	Interval   time.Duration
 	StuckAfter time.Duration
 	BatchSize  int
 }
 
-func NewReconciler(c ChainClient, cfg ChainConfig, repo repository.PendingTxRepository) *Reconciler {
+func NewReconciler(c ChainClient, cfg ChainConfig, repo repository.OnchainTxRepository) *Reconciler {
 	return &Reconciler{
 		Client: c, Cfg: cfg, PendingTxs: repo,
 		Interval:   time.Hour,
@@ -61,9 +61,9 @@ func (r *Reconciler) tick(ctx context.Context) error {
 		receipt, err := r.Client.TransactionReceipt(ctx, common.HexToHash(p.TxHash))
 		switch {
 		case err != nil || receipt == nil:
-			_ = r.PendingTxs.UpdateConfirmations(ctx, p.TxHash, p.Confirmations, domain.PendingTxStatusReorged)
+			_ = r.PendingTxs.UpdateConfirmations(ctx, p.TxHash, p.Confirmations, domain.OnchainTxStatusReorged)
 		case receipt.Status != 1:
-			_ = r.PendingTxs.UpdateConfirmations(ctx, p.TxHash, p.Confirmations, domain.PendingTxStatusFailed)
+			_ = r.PendingTxs.UpdateConfirmations(ctx, p.TxHash, p.Confirmations, domain.OnchainTxStatusFailed)
 		}
 		if now.Sub(p.CreatedAt) > r.StuckAfter {
 			logger.L().Warn("on-chain pending tx stuck > threshold (Layer 4 alert)",

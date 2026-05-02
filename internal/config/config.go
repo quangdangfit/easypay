@@ -42,22 +42,17 @@ type AppConfig struct {
 	// these for `mode=payment` Checkout Sessions.
 	CheckoutDefaultSuccessURL string
 	CheckoutDefaultCancelURL  string
-	// TransactionIDSecret keys the HMAC that turns
-	// (merchant_id, merchant_order_id) into the deterministic 16-byte
-	// transaction_id and 12-byte order_id (with shard byte). The MySQL
-	// UNIQUE on (merchant_id, transaction_id) is the single dedupe layer,
-	// so this secret is required.
-	TransactionIDSecret string
+	// LogicalShardCount caps the number of logical shards merchants are
+	// distributed across via `merchants.shard_index`. Today every shard
+	// lives on the single `transactions` table; future deployments can
+	// partition by this column without changing application code.
+	LogicalShardCount uint8
 }
 
 type DBConfig struct {
 	DSN          string
 	MaxOpenConns int
 	MaxIdleConns int
-	// ShardDSNs, when non-empty, overrides DSN for the orders sharded repo.
-	// Either 1 entry (single MySQL hosts all 16 shard tables) or exactly
-	// ShardCount entries (one per shard).
-	ShardDSNs []string
 }
 
 type RedisConfig struct {
@@ -99,6 +94,10 @@ type BlockchainConfig struct {
 type SecurityConfig struct {
 	HMACSecret        string
 	HMACTimestampSkew time.Duration
+	// AdminAPIKey gates the /admin/* HTTP routes (e.g. POST /admin/merchants).
+	// Compared against the X-Admin-Key request header in constant time.
+	// When empty, admin routes are not mounted.
+	AdminAPIKey string
 }
 
 func Load() (*Config, error) {
@@ -115,13 +114,12 @@ func Load() (*Config, error) {
 			StripeRateLimit:           getenvInt("STRIPE_RATE_LIMIT", 80),
 			CheckoutDefaultSuccessURL: getenv("CHECKOUT_DEFAULT_SUCCESS_URL", publicBase+"/checkout/success"),
 			CheckoutDefaultCancelURL:  getenv("CHECKOUT_DEFAULT_CANCEL_URL", publicBase+"/checkout/cancel"),
-			TransactionIDSecret:       getenv("TRANSACTION_ID_SECRET", ""),
+			LogicalShardCount:         shardCount(getenvInt("LOGICAL_SHARD_COUNT", 16)),
 		},
 		DB: DBConfig{
 			DSN:          mustGetenv("DB_DSN"),
 			MaxOpenConns: getenvInt("DB_MAX_OPEN_CONNS", 100),
 			MaxIdleConns: getenvInt("DB_MAX_IDLE_CONNS", 25),
-			ShardDSNs:    splitNonEmpty(getenv("ORDERS_SHARD_DSNS", "")),
 		},
 		Redis: RedisConfig{
 			Addr:     getenv("REDIS_ADDR", "localhost:6379"),
@@ -153,6 +151,7 @@ func Load() (*Config, error) {
 		Security: SecurityConfig{
 			HMACSecret:        mustGetenv("HMAC_SECRET"),
 			HMACTimestampSkew: time.Duration(getenvInt("HMAC_TIMESTAMP_SKEW_SECONDS", 300)) * time.Second,
+			AdminAPIKey:       getenv("ADMIN_API_KEY", ""),
 		},
 	}
 
@@ -219,20 +218,16 @@ func nonNegUint64(v int) uint64 {
 	return uint64(v)
 }
 
-// splitNonEmpty splits s on commas and drops empty entries.
-func splitNonEmpty(s string) []string {
-	if s == "" {
-		return nil
+// shardCount clamps LOGICAL_SHARD_COUNT into the valid uint8 range
+// [1, 255]. The default is applied by the caller.
+func shardCount(v int) uint8 {
+	if v < 1 {
+		return 1
 	}
-	parts := strings.Split(s, ",")
-	out := parts[:0]
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
-		}
+	if v > 255 {
+		return 255
 	}
-	return out
+	return uint8(v)
 }
 
 func getenvBool(key string, def bool) bool {

@@ -74,8 +74,8 @@ func TestWebhook_SucceededPath(t *testing.T) {
 	if err := svc.Process(context.Background(), body, hdr); err != nil {
 		t.Fatalf("process: %v", err)
 	}
-	if repo.byID["ord-1"].Status != domain.OrderStatusPaid {
-		t.Fatalf("status: %s", repo.byID["ord-1"].Status)
+	if repo.byID["M1:ord-1"].Status != domain.OrderStatusPaid {
+		t.Fatalf("status: %s", repo.byID["M1:ord-1"].Status)
 	}
 	if len(pub.confirmed) != 1 {
 		t.Fatalf("expected 1 confirmation event, got %d", len(pub.confirmed))
@@ -93,8 +93,8 @@ func TestWebhook_FailedPath(t *testing.T) {
 	if err := svc.Process(context.Background(), body, hdr); err != nil {
 		t.Fatalf("process: %v", err)
 	}
-	if repo.byID["ord-1"].Status != domain.OrderStatusFailed {
-		t.Fatalf("status: %s", repo.byID["ord-1"].Status)
+	if repo.byID["M1:ord-1"].Status != domain.OrderStatusFailed {
+		t.Fatalf("status: %s", repo.byID["M1:ord-1"].Status)
 	}
 }
 
@@ -110,8 +110,8 @@ func TestWebhook_RefundedPath(t *testing.T) {
 	if err := svc.Process(context.Background(), body, hdr); err != nil {
 		t.Fatalf("process: %v", err)
 	}
-	if repo.byID["ord-1"].Status != domain.OrderStatusRefunded {
-		t.Fatalf("status: %s", repo.byID["ord-1"].Status)
+	if repo.byID["M1:ord-1"].Status != domain.OrderStatusRefunded {
+		t.Fatalf("status: %s", repo.byID["M1:ord-1"].Status)
 	}
 }
 
@@ -124,7 +124,7 @@ func TestWebhook_DisputeIsNoOp(t *testing.T) {
 	if err := svc.Process(context.Background(), body, hdr); err != nil {
 		t.Fatalf("process: %v", err)
 	}
-	if repo.byID["ord-1"].Status == domain.OrderStatusFailed {
+	if repo.byID["M1:ord-1"].Status == domain.OrderStatusFailed {
 		t.Fatal("dispute shouldn't fail order")
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/quangdangfit/easypay/internal/domain"
@@ -16,54 +15,38 @@ import (
 var ErrNotFound = errors.New("order not found")
 
 // ErrDuplicateOrder is returned by Insert when a row with the same
-// (merchant_id, transaction_id) already exists. Callers rely on this to
-// implement sync-write idempotency: on duplicate, they fetch the existing
-// row via GetByTransactionID and return its already-derived response.
+// (merchant_id, transaction_id) — equivalently (merchant_id, order_id) —
+// already exists. Callers rely on this to implement sync-write idempotency:
+// on duplicate, they fetch the existing row via GetByTransactionID and
+// return its already-derived response.
 var ErrDuplicateOrder = errors.New("duplicate order (merchant_id, transaction_id)")
 
-// OrderRepository is the port the service layer depends on. The single
-// public implementation routes a row to one of N=ShardCount physical
-// `orders_<shard>` tables, each backed by its own *sql.DB pool.
+// OrderRepository is the port the service layer depends on. It speaks to a
+// single `transactions` table; logical sharding lives on
+// `merchants.shard_index` and is not in the read/write path today.
 type OrderRepository interface {
 	Insert(ctx context.Context, o *domain.Order) error
 	GetByTransactionID(ctx context.Context, merchantID, transactionID string) (*domain.Order, error)
-	GetByOrderID(ctx context.Context, orderID string) (*domain.Order, error)
+	GetByMerchantOrderID(ctx context.Context, merchantID, orderID string) (*domain.Order, error)
+	// GetByOrderIDAny is a global lookup keyed only on order_id. Used by the
+	// blockchain confirmation path, which doesn't know merchant_id ahead of
+	// time (the smart-contract event only carries order_id). Returns the
+	// first matching row — merchants that route on-chain payments should
+	// use globally unique order_ids (UUID/ULID) to avoid collisions.
+	GetByOrderIDAny(ctx context.Context, orderID string) (*domain.Order, error)
 	GetByPaymentIntentID(ctx context.Context, pi string) (*domain.Order, error)
-	UpdateStatus(ctx context.Context, orderID string, status domain.OrderStatus, stripePaymentIntentID string) error
-	UpdateCheckout(ctx context.Context, orderID, stripeSessionID, stripePaymentIntentID string) error
+	UpdateStatus(ctx context.Context, merchantID, orderID string, status domain.OrderStatus, stripePaymentIntentID string) error
+	UpdateCheckout(ctx context.Context, merchantID, orderID, stripeSessionID, stripePaymentIntentID string) error
 	GetPendingBefore(ctx context.Context, before time.Time, limit int) ([]*domain.Order, error)
 }
 
-type shardedOrderRepo struct {
-	shards [ShardCount]*sql.DB
+type orderRepo struct {
+	db *sql.DB
 }
 
-// NewShardedOrderRepository wires a sharded repo over a slice of N=ShardCount
-// pools. For dev/testing where all shards live on a single MySQL instance,
-// pass the same *sql.DB ShardCount times.
-func NewShardedOrderRepository(shards []*sql.DB) (OrderRepository, error) {
-	if len(shards) != ShardCount {
-		return nil, fmt.Errorf("sharded repo: want %d pools, got %d", ShardCount, len(shards))
-	}
-	r := &shardedOrderRepo{}
-	for i, db := range shards {
-		if db == nil {
-			return nil, fmt.Errorf("sharded repo: pool[%d] is nil", i)
-		}
-		r.shards[i] = db
-	}
-	return r, nil
-}
-
-// NewOrderRepository is a convenience for the common single-MySQL deployment
-// where all 16 shard tables live in the same database. Every call routes by
-// table name; the underlying *sql.DB is shared.
+// NewOrderRepository constructs an OrderRepository over a single MySQL pool.
 func NewOrderRepository(db *sql.DB) OrderRepository {
-	r := &shardedOrderRepo{}
-	for i := range r.shards {
-		r.shards[i] = db
-	}
-	return r
+	return &orderRepo{db: db}
 }
 
 const insertCols = "(merchant_id, transaction_id, order_id, amount, currency_code, status, payment_method, stripe_pi_id, stripe_session, created_at, updated_at)"
@@ -72,7 +55,7 @@ const insertPlaceholders = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 
 const selectCols = "merchant_id, transaction_id, order_id, amount, currency_code, status, payment_method, stripe_pi_id, stripe_session, created_at, updated_at"
 
-func (r *shardedOrderRepo) Insert(ctx context.Context, o *domain.Order) error {
+func (r *orderRepo) Insert(ctx context.Context, o *domain.Order) error {
 	merch := []byte(o.MerchantID)
 	if len(merch) > 16 {
 		return fmt.Errorf("merchant_id too long: %d bytes (max 16)", len(merch))
@@ -81,8 +64,7 @@ func (r *shardedOrderRepo) Insert(ctx context.Context, o *domain.Order) error {
 	if err != nil {
 		return fmt.Errorf("transaction_id: %w", err)
 	}
-	ord, err := decodeHex12(o.OrderID)
-	if err != nil {
+	if err := domain.ValidateOrderID(o.OrderID); err != nil {
 		return fmt.Errorf("order_id: %w", err)
 	}
 	if o.Amount < 0 {
@@ -106,11 +88,9 @@ func (r *shardedOrderRepo) Insert(ctx context.Context, o *domain.Order) error {
 	createdSec := unixToU32(o.CreatedAt)
 	updatedSec := unixToU32(o.UpdatedAt)
 
-	shard := ShardOf(o.MerchantID)
-	// #nosec G202 -- table name comes from ShardTable() over a fixed enum.
-	q := "INSERT INTO " + ShardTable(shard) + " " + insertCols + " VALUES " + insertPlaceholders
-	_, err = r.shards[shard].ExecContext(ctx, q,
-		merch, txn, ord, uint64(o.Amount), cur, st, pm,
+	q := "INSERT INTO transactions " + insertCols + " VALUES " + insertPlaceholders
+	_, err = r.db.ExecContext(ctx, q,
+		merch, txn, o.OrderID, uint64(o.Amount), cur, st, pm,
 		nullBytes(o.StripePaymentIntentID), nullBytes(o.StripeSessionID),
 		createdSec, updatedSec,
 	)
@@ -123,105 +103,65 @@ func (r *shardedOrderRepo) Insert(ctx context.Context, o *domain.Order) error {
 	return nil
 }
 
-func (r *shardedOrderRepo) GetByTransactionID(ctx context.Context, merchantID, transactionID string) (*domain.Order, error) {
+func (r *orderRepo) GetByTransactionID(ctx context.Context, merchantID, transactionID string) (*domain.Order, error) {
 	merch := []byte(merchantID)
 	txn, err := decodeHex16(transactionID)
 	if err != nil {
 		return nil, fmt.Errorf("transaction_id: %w", err)
 	}
-	shard := ShardOf(merchantID)
-	// #nosec G202 -- table name from fixed enum.
-	q := "SELECT " + selectCols + " FROM " + ShardTable(shard) + " WHERE merchant_id = ? AND transaction_id = ? LIMIT 1"
-	row := r.shards[shard].QueryRowContext(ctx, q, merch, txn)
+	q := "SELECT " + selectCols + " FROM transactions WHERE merchant_id = ? AND transaction_id = ? LIMIT 1"
+	row := r.db.QueryRowContext(ctx, q, merch, txn)
 	return scanOrder(row)
 }
 
-func (r *shardedOrderRepo) GetByOrderID(ctx context.Context, orderID string) (*domain.Order, error) {
+func (r *orderRepo) GetByMerchantOrderID(ctx context.Context, merchantID, orderID string) (*domain.Order, error) {
 	if err := domain.ValidateOrderID(orderID); err != nil {
 		return nil, err
 	}
-	shard, err := domain.ShardOfOrderID(orderID)
-	if err != nil {
-		return nil, err
-	}
-	if shard >= ShardCount {
-		return nil, fmt.Errorf("order_id shard %d out of range", shard)
-	}
-	ord, err := decodeHex12(orderID)
-	if err != nil {
-		return nil, err
-	}
-	// #nosec G202 -- table name from fixed enum.
-	q := "SELECT " + selectCols + " FROM " + ShardTable(shard) + " WHERE order_id = ? LIMIT 1"
-	row := r.shards[shard].QueryRowContext(ctx, q, ord)
+	merch := []byte(merchantID)
+	q := "SELECT " + selectCols + " FROM transactions WHERE merchant_id = ? AND order_id = ? LIMIT 1"
+	row := r.db.QueryRowContext(ctx, q, merch, orderID)
 	return scanOrder(row)
 }
 
-// GetByPaymentIntentID fans out across all shards. Used only on the refund
-// recovery path when a Stripe charge.refunded event lacks our metadata.
-// Latency = max(shards). Acceptable because this isn't on the hot path.
-func (r *shardedOrderRepo) GetByPaymentIntentID(ctx context.Context, pi string) (*domain.Order, error) {
+func (r *orderRepo) GetByOrderIDAny(ctx context.Context, orderID string) (*domain.Order, error) {
+	if err := domain.ValidateOrderID(orderID); err != nil {
+		return nil, err
+	}
+	q := "SELECT " + selectCols + " FROM transactions WHERE order_id = ? LIMIT 1"
+	row := r.db.QueryRowContext(ctx, q, orderID)
+	return scanOrder(row)
+}
+
+// GetByPaymentIntentID looks up by Stripe PI id. Used on the refund recovery
+// path when a Stripe charge.refunded event lacks our metadata. Indexed by
+// idx_pi_id.
+func (r *orderRepo) GetByPaymentIntentID(ctx context.Context, pi string) (*domain.Order, error) {
 	if pi == "" {
 		return nil, ErrNotFound
 	}
-	type result struct {
-		o   *domain.Order
-		err error
-	}
-	out := make(chan result, ShardCount)
-	var wg sync.WaitGroup
-	for i := uint8(0); i < ShardCount; i++ {
-		wg.Add(1)
-		go func(shard uint8) {
-			defer wg.Done()
-			// #nosec G202 -- table name from fixed enum.
-			q := "SELECT " + selectCols + " FROM " + ShardTable(shard) + " WHERE stripe_pi_id = ? LIMIT 1"
-			row := r.shards[shard].QueryRowContext(ctx, q, []byte(pi))
-			o, err := scanOrder(row)
-			out <- result{o, err}
-		}(i)
-	}
-	wg.Wait()
-	close(out)
-	for res := range out {
-		if res.err == nil && res.o != nil {
-			return res.o, nil
-		}
-		if res.err != nil && !errors.Is(res.err, ErrNotFound) {
-			return nil, res.err
-		}
-	}
-	return nil, ErrNotFound
+	q := "SELECT " + selectCols + " FROM transactions WHERE stripe_pi_id = ? LIMIT 1"
+	row := r.db.QueryRowContext(ctx, q, []byte(pi))
+	return scanOrder(row)
 }
 
-func (r *shardedOrderRepo) UpdateStatus(ctx context.Context, orderID string, status domain.OrderStatus, stripePaymentIntentID string) error {
+func (r *orderRepo) UpdateStatus(ctx context.Context, merchantID, orderID string, status domain.OrderStatus, stripePaymentIntentID string) error {
 	if err := domain.ValidateOrderID(orderID); err != nil {
-		return err
-	}
-	shard, err := domain.ShardOfOrderID(orderID)
-	if err != nil {
-		return err
-	}
-	if shard >= ShardCount {
-		return fmt.Errorf("order_id shard %d out of range", shard)
-	}
-	ord, err := decodeHex12(orderID)
-	if err != nil {
 		return err
 	}
 	st, err := encodeStatus(status)
 	if err != nil {
 		return err
 	}
+	merch := []byte(merchantID)
 	now := unixToU32(time.Now().UTC())
 	// COALESCE(NULLIF(?, ''), ...) keeps the existing PI id if the caller
 	// passes "" (e.g. webhook for charge.refunded where the PI is already set).
-	// #nosec G202 -- table name from fixed enum.
-	q := "UPDATE " + ShardTable(shard) + ` SET
+	q := `UPDATE transactions SET
 			status = ?, updated_at = ?,
 			stripe_pi_id = COALESCE(NULLIF(?, _binary''), stripe_pi_id)
-		 WHERE order_id = ?`
-	res, err := r.shards[shard].ExecContext(ctx, q, st, now, []byte(stripePaymentIntentID), ord)
+		 WHERE merchant_id = ? AND order_id = ?`
+	res, err := r.db.ExecContext(ctx, q, st, now, []byte(stripePaymentIntentID), merch, orderID)
 	if err != nil {
 		return fmt.Errorf("update status: %w", err)
 	}
@@ -232,29 +172,18 @@ func (r *shardedOrderRepo) UpdateStatus(ctx context.Context, orderID string, sta
 	return nil
 }
 
-func (r *shardedOrderRepo) UpdateCheckout(ctx context.Context, orderID, sessionID, piID string) error {
+func (r *orderRepo) UpdateCheckout(ctx context.Context, merchantID, orderID, sessionID, piID string) error {
 	if err := domain.ValidateOrderID(orderID); err != nil {
 		return err
 	}
-	shard, err := domain.ShardOfOrderID(orderID)
-	if err != nil {
-		return err
-	}
-	if shard >= ShardCount {
-		return fmt.Errorf("order_id shard %d out of range", shard)
-	}
-	ord, err := decodeHex12(orderID)
-	if err != nil {
-		return err
-	}
+	merch := []byte(merchantID)
 	now := unixToU32(time.Now().UTC())
-	// #nosec G202 -- table name from fixed enum.
-	q := "UPDATE " + ShardTable(shard) + ` SET
+	q := `UPDATE transactions SET
 			stripe_session = COALESCE(NULLIF(?, _binary''), stripe_session),
 			stripe_pi_id   = COALESCE(NULLIF(?, _binary''), stripe_pi_id),
 			updated_at     = ?
-		 WHERE order_id = ?`
-	res, err := r.shards[shard].ExecContext(ctx, q, []byte(sessionID), []byte(piID), now, ord)
+		 WHERE merchant_id = ? AND order_id = ?`
+	res, err := r.db.ExecContext(ctx, q, []byte(sessionID), []byte(piID), now, merch, orderID)
 	if err != nil {
 		return fmt.Errorf("update checkout: %w", err)
 	}
@@ -264,9 +193,9 @@ func (r *shardedOrderRepo) UpdateCheckout(ctx context.Context, orderID, sessionI
 	return nil
 }
 
-// GetPendingBefore fans out across shards for the reconciliation cron.
-// Each shard returns up to limit; we aggregate and trim to limit overall.
-func (r *shardedOrderRepo) GetPendingBefore(ctx context.Context, before time.Time, limit int) ([]*domain.Order, error) {
+// GetPendingBefore returns up to limit orders in created/pending state whose
+// created_at is older than `before`. Used by the reconciliation cron.
+func (r *orderRepo) GetPendingBefore(ctx context.Context, before time.Time, limit int) ([]*domain.Order, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
@@ -274,49 +203,21 @@ func (r *shardedOrderRepo) GetPendingBefore(ctx context.Context, before time.Tim
 	created, _ := encodeStatus(domain.OrderStatusCreated)
 	pending, _ := encodeStatus(domain.OrderStatusPending)
 
-	type result struct {
-		rows []*domain.Order
-		err  error
+	q := "SELECT " + selectCols + ` FROM transactions WHERE status IN (?, ?) AND created_at < ? ORDER BY created_at ASC LIMIT ?`
+	rows, err := r.db.QueryContext(ctx, q, created, pending, cutoff, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query pending: %w", err)
 	}
-	out := make(chan result, ShardCount)
-	var wg sync.WaitGroup
-	for i := uint8(0); i < ShardCount; i++ {
-		wg.Add(1)
-		go func(shard uint8) {
-			defer wg.Done()
-			// #nosec G202 -- table name from fixed enum.
-			q := "SELECT " + selectCols + " FROM " + ShardTable(shard) + ` WHERE status IN (?, ?) AND created_at < ? ORDER BY created_at ASC LIMIT ?`
-			rows, err := r.shards[shard].QueryContext(ctx, q, created, pending, cutoff, limit)
-			if err != nil {
-				out <- result{err: fmt.Errorf("shard %d query: %w", shard, err)}
-				return
-			}
-			defer func() { _ = rows.Close() }()
-			batch := make([]*domain.Order, 0, limit)
-			for rows.Next() {
-				o, err := scanOrder(rows)
-				if err != nil {
-					out <- result{err: fmt.Errorf("shard %d scan: %w", shard, err)}
-					return
-				}
-				batch = append(batch, o)
-			}
-			out <- result{rows: batch, err: rows.Err()}
-		}(i)
-	}
-	wg.Wait()
-	close(out)
-	all := make([]*domain.Order, 0, limit)
-	for res := range out {
-		if res.err != nil {
-			return nil, res.err
+	defer func() { _ = rows.Close() }()
+	out := make([]*domain.Order, 0, limit)
+	for rows.Next() {
+		o, err := scanOrder(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
 		}
-		all = append(all, res.rows...)
+		out = append(out, o)
 	}
-	if len(all) > limit {
-		all = all[:limit]
-	}
-	return all, nil
+	return out, rows.Err()
 }
 
 type scanner interface {
@@ -327,7 +228,7 @@ func scanOrder(s scanner) (*domain.Order, error) {
 	var (
 		merch        []byte
 		txn          []byte
-		ord          []byte
+		ord          string
 		amount       uint64
 		currencyCode uint16
 		status       uint8
@@ -354,7 +255,7 @@ func scanOrder(s scanner) (*domain.Order, error) {
 	return &domain.Order{
 		MerchantID:            string(merch),
 		TransactionID:         hexLower(txn),
-		OrderID:               hexLower(ord),
+		OrderID:               ord,
 		Amount:                int64(amount),
 		Currency:              cur,
 		Status:                st,
@@ -376,7 +277,7 @@ func nullBytes(s string) any {
 }
 
 // nullString returns a typed nil for the driver if s is empty (used by
-// pending_tx_repo for VARCHAR columns).
+// onchain_tx_repo for VARCHAR columns).
 func nullString(s string) any {
 	if s == "" {
 		return nil

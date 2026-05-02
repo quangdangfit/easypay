@@ -5,16 +5,19 @@ import (
 	"time"
 )
 
-type PendingTxStatus string
+// OnchainTxStatus tracks the lifecycle of an on-chain payment we observe.
+type OnchainTxStatus string
 
 const (
-	PendingTxStatusPending   PendingTxStatus = "pending"
-	PendingTxStatusConfirmed PendingTxStatus = "confirmed"
-	PendingTxStatusFailed    PendingTxStatus = "failed"
-	PendingTxStatusReorged   PendingTxStatus = "reorged"
+	OnchainTxStatusPending   OnchainTxStatus = "pending"
+	OnchainTxStatusConfirmed OnchainTxStatus = "confirmed"
+	OnchainTxStatusFailed    OnchainTxStatus = "failed"
+	OnchainTxStatusReorged   OnchainTxStatus = "reorged"
 )
 
-type PendingTx struct {
+// OnchainTransaction represents a row in the `onchain_transactions` table:
+// a smart-contract payment event we've observed and are waiting to confirm.
+type OnchainTransaction struct {
 	ID              int64
 	TxHash          string
 	BlockNumber     uint64
@@ -25,6 +28,6 @@ type PendingTx struct {
 	ChainID         int64
 	Confirmations   uint64
 	RequiredConfirm uint64
-	Status          PendingTxStatus
+	Status          OnchainTxStatus
 	CreatedAt       time.Time
 }

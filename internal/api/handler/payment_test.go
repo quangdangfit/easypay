@@ -40,7 +40,7 @@ func TestPaymentHandler_HappyPath(t *testing.T) {
 		})
 
 	app, _ := newPaymentApp(svc)
-	body := `{"merchant_order_id":"ORDER-1","amount":1500,"currency":"USD"}`
+	body := `{"order_id":"ORDER-1","amount":1500,"currency":"USD"}`
 	req := httptest.NewRequest("POST", "/api/payments", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := app.Test(req)
@@ -51,7 +51,7 @@ func TestPaymentHandler_HappyPath(t *testing.T) {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status %d: %s", resp.StatusCode, b)
 	}
-	if captured.MerchantOrderID != "ORDER-1" {
+	if captured.OrderID != "ORDER-1" {
 		t.Fatalf("svc not invoked properly: %+v", captured)
 	}
 }
@@ -76,7 +76,7 @@ func TestPaymentHandler_PropagatesInvalidRequest(t *testing.T) {
 	svc.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil, service.ErrInvalidRequest)
 
 	app, _ := newPaymentApp(svc)
-	req := httptest.NewRequest("POST", "/api/payments", strings.NewReader(`{"merchant_order_id":"X"}`))
+	req := httptest.NewRequest("POST", "/api/payments", strings.NewReader(`{"order_id":"X"}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
 	if resp.StatusCode != 400 {
@@ -90,7 +90,7 @@ func TestPaymentHandler_PropagatesGenericError(t *testing.T) {
 	svc.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil, errors.New("kaboom"))
 
 	app, _ := newPaymentApp(svc)
-	req := httptest.NewRequest("POST", "/api/payments", strings.NewReader(`{"merchant_order_id":"X","amount":1}`))
+	req := httptest.NewRequest("POST", "/api/payments", strings.NewReader(`{"order_id":"X","amount":1}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := app.Test(req)
 	if resp.StatusCode != 500 {
@@ -124,7 +124,7 @@ func TestPaymentHandler_QueryMethodPropagated(t *testing.T) {
 		})
 
 	app, _ := newPaymentApp(svc)
-	req := httptest.NewRequest("POST", "/api/payments?method=crypto", strings.NewReader(`{"merchant_order_id":"X","amount":1}`))
+	req := httptest.NewRequest("POST", "/api/payments?method=crypto", strings.NewReader(`{"order_id":"X","amount":1}`))
 	req.Header.Set("Content-Type", "application/json")
 	if _, err := app.Test(req); err != nil {
 		t.Fatal(err)

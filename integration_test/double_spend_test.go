@@ -86,7 +86,7 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 			t.Errorf("expected %d duplicates, got %d", workers-1, dupes.Load())
 		}
 
-		o, _ := orderRepo.GetByOrderID(context.Background(), seed.OrderID)
+		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), seed.MerchantID, seed.OrderID)
 		if o.Status != domain.OrderStatusPaid {
 			t.Errorf("status: got %s want paid", o.Status)
 		}
@@ -124,7 +124,7 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 			t.Fatalf("expected all %d to succeed, got ok=%d fail=%d", workers, ok.Load(), fail.Load())
 		}
 
-		o, _ := orderRepo.GetByOrderID(context.Background(), seed.OrderID)
+		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), seed.MerchantID, seed.OrderID)
 		if o.Status != domain.OrderStatusPaid {
 			t.Fatalf("status: got %s want paid", o.Status)
 		}

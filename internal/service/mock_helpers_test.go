@@ -66,7 +66,7 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 		byTxn: map[string]*domain.Order{},
 	}
 	for _, o := range seed {
-		s.byID[o.OrderID] = o
+		s.byID[o.MerchantID+":"+o.OrderID] = o
 		s.byTxn[o.MerchantID+":"+o.TransactionID] = o
 	}
 	s.mock = repomock.NewMockOrderRepository(gomock.NewController(t))
@@ -81,13 +81,13 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 			// Store a clone so the caller's pointer doesn't alias what the
 			// store returns to other goroutines.
 			cp := cloneOrder(o)
-			s.byID[o.OrderID] = cp
+			s.byID[o.MerchantID+":"+o.OrderID] = cp
 			s.byTxn[key] = cp
 			return nil
 		}).AnyTimes()
-	s.mock.EXPECT().GetByOrderID(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, id string) (*domain.Order, error) {
-			if o, ok := s.lookupByID(id); ok {
+	s.mock.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, merchantID, orderID string) (*domain.Order, error) {
+			if o, ok := s.lookupByID(merchantID + ":" + orderID); ok {
 				return o, nil
 			}
 			return nil, repository.ErrNotFound
@@ -113,11 +113,11 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 			}
 			return nil, repository.ErrNotFound
 		}).AnyTimes()
-	s.mock.EXPECT().UpdateStatus(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, id string, st domain.OrderStatus, pi string) error {
+	s.mock.EXPECT().UpdateStatus(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, merchantID, orderID string, st domain.OrderStatus, pi string) error {
 			s.mu.Lock()
 			defer s.mu.Unlock()
-			o, ok := s.byID[id]
+			o, ok := s.byID[merchantID+":"+orderID]
 			if !ok {
 				return repository.ErrNotFound
 			}
@@ -127,12 +127,12 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 			}
 			return nil
 		}).AnyTimes()
-	s.mock.EXPECT().UpdateCheckout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, id, sid, pi string) error {
+	s.mock.EXPECT().UpdateCheckout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, merchantID, orderID, sid, pi string) error {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			s.updateCheckouts++
-			o, ok := s.byID[id]
+			o, ok := s.byID[merchantID+":"+orderID]
 			if !ok {
 				return repository.ErrNotFound
 			}

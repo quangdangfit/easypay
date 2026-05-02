@@ -112,8 +112,9 @@ func (s *webhookService) handleSucceeded(ctx context.Context, e *stripe.Event) e
 		return err
 	}
 	orderID := o.Metadata["order_id"]
-	if orderID == "" {
-		return fmt.Errorf("event %s missing metadata.order_id", e.ID)
+	merchantID := o.Metadata["merchant_id"]
+	if orderID == "" || merchantID == "" {
+		return fmt.Errorf("event %s missing metadata.order_id or merchant_id", e.ID)
 	}
 
 	// Cross-check with Stripe — never trust the webhook body alone.
@@ -131,14 +132,14 @@ func (s *webhookService) handleSucceeded(ctx context.Context, e *stripe.Event) e
 		}
 	}
 
-	if err := s.repo.UpdateStatus(ctx, orderID, domain.OrderStatusPaid, piID); err != nil {
+	if err := s.repo.UpdateStatus(ctx, merchantID, orderID, domain.OrderStatusPaid, piID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return fmt.Errorf("%w: %s", ErrWebhookOrderMissing, orderID)
 		}
 		return fmt.Errorf("update order: %w", err)
 	}
 
-	order, err := s.repo.GetByOrderID(ctx, orderID)
+	order, err := s.repo.GetByMerchantOrderID(ctx, merchantID, orderID)
 	if err != nil {
 		return fmt.Errorf("load order: %w", err)
 	}
@@ -160,14 +161,15 @@ func (s *webhookService) handleFailed(ctx context.Context, e *stripe.Event) erro
 		return err
 	}
 	orderID := o.Metadata["order_id"]
-	if orderID == "" {
-		return fmt.Errorf("event %s missing metadata.order_id", e.ID)
+	merchantID := o.Metadata["merchant_id"]
+	if orderID == "" || merchantID == "" {
+		return fmt.Errorf("event %s missing metadata.order_id or merchant_id", e.ID)
 	}
 	piID := o.PaymentIntent
 	if piID == "" && o.Object == "payment_intent" {
 		piID = o.ID
 	}
-	if err := s.repo.UpdateStatus(ctx, orderID, domain.OrderStatusFailed, piID); err != nil {
+	if err := s.repo.UpdateStatus(ctx, merchantID, orderID, domain.OrderStatusFailed, piID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return fmt.Errorf("%w: %s", ErrWebhookOrderMissing, orderID)
 		}
@@ -189,23 +191,25 @@ func (s *webhookService) handleRefunded(ctx context.Context, e *stripe.Event) er
 		}
 	}
 	orderID := o.Metadata["order_id"]
-	if orderID == "" && piID != "" {
+	merchantID := o.Metadata["merchant_id"]
+	if (orderID == "" || merchantID == "") && piID != "" {
 		// charge.refunded events sometimes don't carry our metadata; look up
-		// the order by payment_intent_id (slow fan-out across shards).
+		// the order by payment_intent_id (single indexed query).
 		if order, lookupErr := s.repo.GetByPaymentIntentID(ctx, piID); lookupErr == nil {
 			orderID = order.OrderID
+			merchantID = order.MerchantID
 		}
 	}
-	if orderID == "" {
-		return fmt.Errorf("event %s missing order_id and unresolvable", e.ID)
+	if orderID == "" || merchantID == "" {
+		return fmt.Errorf("event %s missing order_id/merchant_id and unresolvable", e.ID)
 	}
-	if err := s.repo.UpdateStatus(ctx, orderID, domain.OrderStatusRefunded, piID); err != nil {
+	if err := s.repo.UpdateStatus(ctx, merchantID, orderID, domain.OrderStatusRefunded, piID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return fmt.Errorf("%w: %s", ErrWebhookOrderMissing, orderID)
 		}
 		return fmt.Errorf("update order refunded: %w", err)
 	}
-	order, err := s.repo.GetByOrderID(ctx, orderID)
+	order, err := s.repo.GetByMerchantOrderID(ctx, merchantID, orderID)
 	if err != nil {
 		return fmt.Errorf("load order: %w", err)
 	}
@@ -243,12 +247,9 @@ func (s *webhookService) CreateRefund(ctx context.Context, in RefundInput) (*Ref
 	if in.Merchant == nil || in.OrderID == "" {
 		return nil, fmt.Errorf("merchant + order_id required")
 	}
-	order, err := s.repo.GetByOrderID(ctx, in.OrderID)
+	order, err := s.repo.GetByMerchantOrderID(ctx, in.Merchant.MerchantID, in.OrderID)
 	if err != nil {
 		return nil, fmt.Errorf("load order: %w", err)
-	}
-	if order.MerchantID != in.Merchant.MerchantID {
-		return nil, fmt.Errorf("order does not belong to merchant")
 	}
 	if order.StripePaymentIntentID == "" {
 		return nil, fmt.Errorf("order has no associated payment intent (crypto refunds not supported)")

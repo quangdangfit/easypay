@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -19,24 +18,23 @@ import (
 var (
 	ErrInvalidRequest    = errors.New("invalid request")
 	ErrUnsupportedMethod = errors.New("unsupported payment method")
-	// ErrTransactionConflict is returned when a (merchant_id, transaction_id)
-	// already exists with a different amount, currency, or method. The merchant
-	// is reusing the same idempotency key for a materially different payment,
-	// which we refuse rather than silently override or duplicate.
-	ErrTransactionConflict = errors.New("transaction_id conflicts with existing payment")
+	// ErrTransactionConflict is returned when a (merchant_id, order_id)
+	// already exists with a different amount, currency, or method. The
+	// merchant is reusing the same idempotency key for a materially
+	// different payment, which we refuse rather than silently override.
+	ErrTransactionConflict = errors.New("order_id conflicts with existing payment")
 )
 
 // CreatePaymentInput is what the HTTP handler hands to the service.
 //
-// MerchantOrderID is the merchant's own idempotency key for the payment.
-// The service derives a 16-byte transaction_id and 12-byte order_id from
-// (merchant_id, merchant_order_id) using HMAC-SHA256 keyed by
-// TransactionIDSecret, then INSERTs the row before returning. Two retries
-// for the same MerchantOrderID always collapse to the same row via the
-// MySQL UNIQUE constraint.
+// OrderID is the merchant's own idempotency key (their order/cart id).
+// The service derives a 16-byte transaction_id from
+// (merchant_id, order_id) using SHA-256, then INSERTs the row before
+// returning. Two retries with the same OrderID always collapse to the
+// same row via the MySQL UNIQUE constraint.
 type CreatePaymentInput struct {
 	Merchant           *domain.Merchant
-	MerchantOrderID    string
+	OrderID            string
 	Amount             int64
 	Currency           string
 	PaymentMethodTypes []string
@@ -50,8 +48,7 @@ type CreatePaymentInput struct {
 // CreatePaymentResult is what we return to the merchant.
 //
 // CheckoutURL is reconstructed at response time from the persisted state
-// (Stripe session_id for eager mode, signed token URL for lazy mode). The
-// row itself does not store this column.
+// (Stripe session_id for eager mode, signed token URL for lazy mode).
 type CreatePaymentResult struct {
 	OrderID               string         `json:"order_id"`
 	TransactionID         string         `json:"transaction_id"`
@@ -91,10 +88,6 @@ type paymentService struct {
 
 	defaultSuccessURL string
 	defaultCancelURL  string
-
-	// txnSecret keys the HMAC that derives transaction_id from
-	// (merchant_id, merchant_order_id). Required.
-	txnSecret string
 }
 
 type PaymentServiceOptions struct {
@@ -107,14 +100,6 @@ type PaymentServiceOptions struct {
 	CheckoutTokenTTL  time.Duration
 	DefaultSuccessURL string
 	DefaultCancelURL  string
-	// TransactionIDSecret keys the HMAC-SHA256 that turns a merchant's
-	// (merchant_id, merchant_order_id) pair into the deterministic 16-byte
-	// transaction_id and 12-byte order_id. Required for sync-write
-	// idempotency: two retries with the same MerchantOrderID collapse onto
-	// the same primary-key row, which the MySQL UNIQUE refuses on the
-	// loser, so the loser falls into the GetByTransactionID path and
-	// returns the winner's response.
-	TransactionIDSecret string
 }
 
 func NewPaymentService(stripeC stripe.Client, repo repository.OrderRepository, opts PaymentServiceOptions) Payments {
@@ -134,7 +119,6 @@ func NewPaymentService(stripeC stripe.Client, repo repository.OrderRepository, o
 		checkoutTokenTTL:  ttl,
 		defaultSuccessURL: opts.DefaultSuccessURL,
 		defaultCancelURL:  opts.DefaultCancelURL,
-		txnSecret:         opts.TransactionIDSecret,
 	}
 }
 
@@ -142,14 +126,11 @@ func (s *paymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 	if in.Merchant == nil {
 		return nil, fmt.Errorf("%w: merchant required", ErrInvalidRequest)
 	}
-	if strings.TrimSpace(in.MerchantOrderID) == "" {
-		return nil, fmt.Errorf("%w: merchant_order_id required", ErrInvalidRequest)
+	if err := domain.ValidateOrderID(in.OrderID); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
 	}
 	if in.Amount <= 0 {
 		return nil, fmt.Errorf("%w: amount must be > 0", ErrInvalidRequest)
-	}
-	if s.txnSecret == "" {
-		return nil, fmt.Errorf("transaction_id_secret not configured")
 	}
 	if in.Currency == "" {
 		in.Currency = s.currency
@@ -157,12 +138,12 @@ func (s *paymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 	normalizedCurrency := strings.ToUpper(in.Currency)
 	requestedMethod := primaryMethod(in)
 
-	txnID, orderID := s.deriveIDs(in.Merchant.MerchantID, in.MerchantOrderID)
+	txnID := DeriveTransactionID(in.Merchant.MerchantID, in.OrderID)
 
 	row := &domain.Order{
 		MerchantID:    in.Merchant.MerchantID,
 		TransactionID: txnID,
-		OrderID:       orderID,
+		OrderID:       in.OrderID,
 		Amount:        in.Amount,
 		Currency:      normalizedCurrency,
 		Status:        domain.OrderStatusCreated,
@@ -182,14 +163,14 @@ func (s *paymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 			return nil, fmt.Errorf("%w: amount/currency/method mismatch with order %s",
 				ErrTransactionConflict, existing.OrderID)
 		}
-		return s.reconstructResult(existing), nil
+		return s.reconstructResult(in.Merchant.MerchantID, existing), nil
 	}
 
 	// Successful insert: now do the chosen flow. Order is already durable;
 	// any failure below leaves a `created`-state row that the reconciliation
 	// cron will clean up.
 	result := &CreatePaymentResult{
-		OrderID:       orderID,
+		OrderID:       in.OrderID,
 		TransactionID: txnID,
 		Status:        "accepted",
 	}
@@ -198,13 +179,13 @@ func (s *paymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 	case strings.EqualFold(in.Method, "crypto"):
 		result.CryptoPayload = &CryptoPayload{
 			ContractAddress: s.cryptoContract,
-			OrderID:         orderID,
+			OrderID:         in.OrderID,
 			Amount:          in.Amount,
 			ChainID:         s.cryptoChainID,
 		}
 
 	case s.lazyCheckout:
-		result.CheckoutURL = s.lazyCheckoutURL(orderID)
+		result.CheckoutURL = s.lazyCheckoutURL(in.Merchant.MerchantID, in.OrderID)
 
 	default:
 		// Eager: synchronous Stripe Checkout Session creation.
@@ -218,10 +199,10 @@ func (s *paymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 			SuccessURL:         successURL,
 			CancelURL:          cancelURL,
 			Metadata: map[string]string{
-				"order_id":    orderID,
+				"order_id":    in.OrderID,
 				"merchant_id": in.Merchant.MerchantID,
 			},
-			ClientReferenceID: orderID,
+			ClientReferenceID: in.OrderID,
 		}
 		// Stripe Idempotency-Key = transaction_id hex (32 chars). Same key
 		// across all retries collapses on Stripe's side too.
@@ -235,7 +216,7 @@ func (s *paymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 		result.ClientSecret = session.ClientSecret
 		// Persist Stripe artefacts so future retries / lookups can
 		// reconstruct the URL without another Stripe call.
-		if err := s.repo.UpdateCheckout(ctx, orderID, session.ID, session.PaymentIntentID); err != nil {
+		if err := s.repo.UpdateCheckout(ctx, in.Merchant.MerchantID, in.OrderID, session.ID, session.PaymentIntentID); err != nil {
 			return nil, fmt.Errorf("persist stripe session: %w", err)
 		}
 	}
@@ -243,51 +224,45 @@ func (s *paymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 	return result, nil
 }
 
-// deriveIDs returns (transaction_id_hex, order_id_hex) for an idempotency key.
+// DeriveTransactionID returns the deterministic 32-char hex transaction_id
+// for a (merchant_id, order_id) pair. Two retries with the same input
+// always derive the same id, which makes the MySQL UNIQUE on
+// (merchant_id, transaction_id) collapse retries onto a single row.
 //
-//	tx[0..16] = HMAC-SHA256(secret, merchant_id || ':' || merchant_order_id)[:16]
-//	ord       = ShardOf(merchant_id) || tx[1..12]
-//
-// Embedding the shard byte at order_id[0] is what makes order-id-only
-// lookups (webhook, hosted checkout) shard-routable with no auxiliary
-// table. The rest of order_id (11 bytes) carries enough HMAC entropy that
-// a same-shard collision requires 2^44-ish work.
-func (s *paymentService) deriveIDs(merchantID, merchantOrderID string) (txnHex, orderHex string) {
-	h := hmac.New(sha256.New, []byte(s.txnSecret))
+// Note: this is a public hash, NOT a MAC — knowing the merchant id and
+// order id is sufficient to compute the transaction id. That is by design:
+// the transaction id is internal-but-not-secret, and the merchant already
+// knows both inputs.
+func DeriveTransactionID(merchantID, orderID string) string {
+	h := sha256.New()
 	h.Write([]byte(merchantID))
 	h.Write([]byte{':'})
-	h.Write([]byte(merchantOrderID))
-	sum := h.Sum(nil)
-
-	txn := make([]byte, 16)
-	copy(txn, sum[:16])
-
-	ord := make([]byte, 12)
-	ord[0] = repository.ShardOf(merchantID)
-	copy(ord[1:], txn[1:12])
-
-	return hex.EncodeToString(txn), hex.EncodeToString(ord)
+	h.Write([]byte(orderID))
+	return hex.EncodeToString(h.Sum(nil)[:16])
 }
 
-// lazyCheckoutURL returns the self-hosted /pay/:id URL we hand back in
-// lazy-checkout mode. The actual Stripe Session is created the first time
-// the URL is opened (see CheckoutResolver).
-func (s *paymentService) lazyCheckoutURL(orderID string) string {
+// lazyCheckoutURL returns the self-hosted /pay/:merchant_id/:order_id URL
+// we hand back in lazy-checkout mode. The actual Stripe Session is created
+// the first time the URL is opened (see CheckoutResolver). The signed
+// token binds the URL to (merchant_id, order_id) so attackers can't
+// enumerate orders.
+func (s *paymentService) lazyCheckoutURL(merchantID, orderID string) string {
+	base := s.publicBaseURL + "/pay/" + merchantID + "/" + orderID
 	if s.checkoutSecret == "" {
-		return s.publicBaseURL + "/pay/" + orderID
+		return base
 	}
-	token := checkouttoken.Sign(s.checkoutSecret, orderID, s.checkoutTokenTTL)
+	token := checkouttoken.Sign(s.checkoutSecret, merchantID, orderID, s.checkoutTokenTTL)
 	if token == "" {
-		return s.publicBaseURL + "/pay/" + orderID
+		return base
 	}
-	return s.publicBaseURL + "/pay/" + orderID + "?t=" + token
+	return base + "?t=" + token
 }
 
 // reconstructResult builds the response for an idempotent retry by reading
 // the persisted order. ClientSecret cannot be recovered (Stripe only emits
 // it at session creation), so embedded-checkout retries fall back to the
 // hosted URL.
-func (s *paymentService) reconstructResult(o *domain.Order) *CreatePaymentResult {
+func (s *paymentService) reconstructResult(merchantID string, o *domain.Order) *CreatePaymentResult {
 	res := &CreatePaymentResult{
 		OrderID:               o.OrderID,
 		TransactionID:         o.TransactionID,
@@ -309,7 +284,7 @@ func (s *paymentService) reconstructResult(o *domain.Order) *CreatePaymentResult
 		res.CheckoutURL = "https://checkout.stripe.com/c/pay/" + o.StripeSessionID
 	default:
 		// Lazy mode order that hasn't been opened yet — re-mint the token.
-		res.CheckoutURL = s.lazyCheckoutURL(o.OrderID)
+		res.CheckoutURL = s.lazyCheckoutURL(merchantID, o.OrderID)
 	}
 	return res
 }

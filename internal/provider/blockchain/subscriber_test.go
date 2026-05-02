@@ -57,7 +57,7 @@ func TestSubscriber_HandleLog_DuplicateIsNoOp(t *testing.T) {
 	chain := &fakeChain{}
 	cur := newMemCursor()
 	repo := newPendingTxStore(t)
-	repo.byHash["0x000000000000000000000000000000000000000000000000000000000000abc"] = &domain.PendingTx{}
+	repo.byHash["0x000000000000000000000000000000000000000000000000000000000000abc"] = &domain.OnchainTransaction{}
 
 	s := NewSubscriber(chain, ChainConfig{ChainID: 1}, cur, repo.mock)
 	if err := s.handleLog(context.Background(), sampleLog()); err != nil {

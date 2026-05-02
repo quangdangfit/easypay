@@ -9,11 +9,11 @@ import (
 )
 
 // codec.go encodes the app-layer (string) types to the on-disk binary /
-// integer representations used by the v2 sharded schema, and vice-versa.
+// integer representations used by the `transactions` schema, and back.
 //
 // Status, payment_method, and currency_code are integer-coded to keep rows
 // fixed-width and small. The lookup tables here are the source of truth;
-// keep them in sync with migration 003's column comments.
+// keep them in sync with migration 001's column comments.
 
 // --- status -----------------------------------------------------------------
 
@@ -175,17 +175,6 @@ func decodeHex16(s string) ([]byte, error) {
 	b, err := hex.DecodeString(s)
 	if err != nil {
 		return nil, fmt.Errorf("hex16: %w", err)
-	}
-	return b, nil
-}
-
-func decodeHex12(s string) ([]byte, error) {
-	if len(s) != 24 {
-		return nil, fmt.Errorf("hex12: want 24 chars, got %d", len(s))
-	}
-	b, err := hex.DecodeString(s)
-	if err != nil {
-		return nil, fmt.Errorf("hex12: %w", err)
 	}
 	return b, nil
 }

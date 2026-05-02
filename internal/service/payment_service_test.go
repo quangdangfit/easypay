@@ -10,17 +10,14 @@ import (
 	"github.com/quangdangfit/easypay/internal/domain"
 )
 
-const testTxnSecret = "unit-test-transaction-id-secret"
-
 func newSvc(t *testing.T) (Payments, *stripeStub, *orderStore) {
 	t.Helper()
 	stripeC := newStripeStub(t)
 	store := newOrderStore(t)
 	svc := NewPaymentService(stripeC.mock, store.mock, PaymentServiceOptions{
-		DefaultCurrency:     "USD",
-		CryptoContract:      "0xCONTRACT",
-		CryptoChainID:       11155111,
-		TransactionIDSecret: testTxnSecret,
+		DefaultCurrency: "USD",
+		CryptoContract:  "0xCONTRACT",
+		CryptoChainID:   11155111,
 		// LazyCheckout off → eager Stripe path.
 	})
 	return svc, stripeC, store
@@ -30,7 +27,7 @@ func TestCreate_HappyPath(t *testing.T) {
 	svc, stripeC, store := newSvc(t)
 	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
 	res, err := svc.Create(context.Background(), CreatePaymentInput{
-		Merchant: merchant, MerchantOrderID: "ORDER-1", Amount: 1500, Currency: "USD",
+		Merchant: merchant, OrderID: "ORDER-1", Amount: 1500, Currency: "USD",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -45,7 +42,7 @@ func TestCreate_HappyPath(t *testing.T) {
 		t.Fatalf("expected one UpdateCheckout, got %d", store.updateCheckouts)
 	}
 	// Row must be persisted before we returned.
-	if _, ok := store.byID[res.OrderID]; !ok {
+	if _, ok := store.byID[merchant.MerchantID+":"+res.OrderID]; !ok {
 		t.Fatal("expected row in store after Create")
 	}
 }
@@ -53,7 +50,7 @@ func TestCreate_HappyPath(t *testing.T) {
 func TestCreate_IdempotentDuplicate(t *testing.T) {
 	svc, stripeC, _ := newSvc(t)
 	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
-	in := CreatePaymentInput{Merchant: merchant, MerchantOrderID: "ORDER-DUP", Amount: 1000, Currency: "USD"}
+	in := CreatePaymentInput{Merchant: merchant, OrderID: "ORDER-DUP", Amount: 1000, Currency: "USD"}
 
 	first, err := svc.Create(context.Background(), in)
 	if err != nil {
@@ -78,7 +75,7 @@ func TestCreate_CryptoPath(t *testing.T) {
 	svc, stripeC, _ := newSvc(t)
 	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
 	res, err := svc.Create(context.Background(), CreatePaymentInput{
-		Merchant: merchant, MerchantOrderID: "ORDER-CRYPTO", Amount: 5000, Currency: "USD", Method: "crypto",
+		Merchant: merchant, OrderID: "ORDER-CRYPTO", Amount: 5000, Currency: "USD", Method: "crypto",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -98,15 +95,14 @@ func TestCreate_LazyCheckoutDoesNotHitStripe(t *testing.T) {
 	stripeC := newStripeStub(t)
 	store := newOrderStore(t)
 	svc := NewPaymentService(stripeC.mock, store.mock, PaymentServiceOptions{
-		DefaultCurrency:     "USD",
-		LazyCheckout:        true,
-		PublicBaseURL:       "https://pay.example",
-		CheckoutSecret:      "sec",
-		TransactionIDSecret: testTxnSecret,
+		DefaultCurrency: "USD",
+		LazyCheckout:    true,
+		PublicBaseURL:   "https://pay.example",
+		CheckoutSecret:  "sec",
 	})
 	merchant := &domain.Merchant{MerchantID: "M1"}
 	res, err := svc.Create(context.Background(), CreatePaymentInput{
-		Merchant: merchant, MerchantOrderID: "ORDER-LAZY", Amount: 1500, Currency: "USD",
+		Merchant: merchant, OrderID: "ORDER-LAZY", Amount: 1500, Currency: "USD",
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -120,7 +116,7 @@ func TestCreate_LazyCheckoutDoesNotHitStripe(t *testing.T) {
 	if !strings.Contains(res.CheckoutURL, "?t=") {
 		t.Fatalf("expected token in url: %q", res.CheckoutURL)
 	}
-	if _, ok := store.byID[res.OrderID]; !ok {
+	if _, ok := store.byID[merchant.MerchantID+":"+res.OrderID]; !ok {
 		t.Fatal("expected order persisted in lazy mode")
 	}
 }
@@ -129,13 +125,12 @@ func TestCreate_LazyWithoutSecretSkipsToken(t *testing.T) {
 	stripeC := newStripeStub(t)
 	store := newOrderStore(t)
 	svc := NewPaymentService(stripeC.mock, store.mock, PaymentServiceOptions{
-		DefaultCurrency:     "USD",
-		LazyCheckout:        true,
-		PublicBaseURL:       "https://pay.example",
-		TransactionIDSecret: testTxnSecret,
+		DefaultCurrency: "USD",
+		LazyCheckout:    true,
+		PublicBaseURL:   "https://pay.example",
 	})
 	res, err := svc.Create(context.Background(), CreatePaymentInput{
-		Merchant: &domain.Merchant{MerchantID: "M1"}, MerchantOrderID: "ORDER-1", Amount: 1, Currency: "USD",
+		Merchant: &domain.Merchant{MerchantID: "M1"}, OrderID: "ORDER-1", Amount: 1, Currency: "USD",
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -149,7 +144,7 @@ func TestCreate_DeterministicIDs(t *testing.T) {
 	svc1, _, _ := newSvc(t)
 	svc2, _, _ := newSvc(t) // separate svc, separate store
 	merchant := &domain.Merchant{MerchantID: "M1"}
-	in := CreatePaymentInput{Merchant: merchant, MerchantOrderID: "STABLE", Amount: 1500, Currency: "USD"}
+	in := CreatePaymentInput{Merchant: merchant, OrderID: "STABLE", Amount: 1500, Currency: "USD"}
 
 	a, err := svc1.Create(context.Background(), in)
 	if err != nil {
@@ -160,49 +155,54 @@ func TestCreate_DeterministicIDs(t *testing.T) {
 		t.Fatalf("b: %v", err)
 	}
 	if a.OrderID != b.OrderID {
-		t.Fatalf("order_id should be stable for same input across services: %s vs %s", a.OrderID, b.OrderID)
+		t.Fatalf("order_id should be stable (echo of input): %s vs %s", a.OrderID, b.OrderID)
 	}
 	if a.TransactionID != b.TransactionID {
 		t.Fatalf("transaction_id should be stable: %s vs %s", a.TransactionID, b.TransactionID)
 	}
 	if err := domain.ValidateOrderID(a.OrderID); err != nil {
-		t.Fatalf("derived order_id invalid: %v", err)
+		t.Fatalf("order_id invalid: %v", err)
 	}
 }
 
-func TestCreate_DerivedIDs_DifferentInputs(t *testing.T) {
+// TransactionID is derived from (merchant_id, order_id) so different inputs
+// must yield different transaction_ids. (OrderID is now merchant-supplied and
+// just echoes back, so we no longer compare it across cases.)
+func TestCreate_DerivedTransactionID_DifferentInputs(t *testing.T) {
 	svc, _, _ := newSvc(t)
 	a, err := svc.Create(context.Background(), CreatePaymentInput{
-		Merchant: &domain.Merchant{MerchantID: "M1"}, MerchantOrderID: "A", Amount: 1, Currency: "USD",
+		Merchant: &domain.Merchant{MerchantID: "M1"}, OrderID: "A", Amount: 1, Currency: "USD",
 	})
 	if err != nil {
 		t.Fatalf("a: %v", err)
 	}
 	b, err := svc.Create(context.Background(), CreatePaymentInput{
-		Merchant: &domain.Merchant{MerchantID: "M1"}, MerchantOrderID: "B", Amount: 1, Currency: "USD",
+		Merchant: &domain.Merchant{MerchantID: "M1"}, OrderID: "B", Amount: 1, Currency: "USD",
 	})
 	if err != nil {
 		t.Fatalf("b: %v", err)
 	}
 	c, err := svc.Create(context.Background(), CreatePaymentInput{
-		Merchant: &domain.Merchant{MerchantID: "M2"}, MerchantOrderID: "A", Amount: 1, Currency: "USD",
+		Merchant: &domain.Merchant{MerchantID: "M2"}, OrderID: "A", Amount: 1, Currency: "USD",
 	})
 	if err != nil {
 		t.Fatalf("c: %v", err)
 	}
-	if a.OrderID == b.OrderID || a.OrderID == c.OrderID || b.OrderID == c.OrderID {
-		t.Fatalf("collision: a=%s b=%s c=%s", a.OrderID, b.OrderID, c.OrderID)
+	if a.TransactionID == b.TransactionID ||
+		a.TransactionID == c.TransactionID ||
+		b.TransactionID == c.TransactionID {
+		t.Fatalf("transaction_id collision: a=%s b=%s c=%s", a.TransactionID, b.TransactionID, c.TransactionID)
 	}
 }
 
-// TestCreate_ConflictOnAmountMismatch ensures merchants cannot reuse a
-// merchant_order_id with different material payment data — that would
-// silently override or duplicate state otherwise.
+// TestCreate_ConflictOnAmountMismatch ensures merchants cannot reuse an
+// order_id with different material payment data — that would silently
+// override or duplicate state otherwise.
 func TestCreate_ConflictOnAmountMismatch(t *testing.T) {
 	svc, _, _ := newSvc(t)
 	merchant := &domain.Merchant{MerchantID: "M1"}
 	in := CreatePaymentInput{
-		Merchant: merchant, MerchantOrderID: "CONFLICT", Amount: 1500, Currency: "USD",
+		Merchant: merchant, OrderID: "CONFLICT", Amount: 1500, Currency: "USD",
 	}
 	if _, err := svc.Create(context.Background(), in); err != nil {
 		t.Fatalf("first: %v", err)
@@ -219,7 +219,7 @@ func TestCreate_ConflictOnCurrencyMismatch(t *testing.T) {
 	svc, _, _ := newSvc(t)
 	merchant := &domain.Merchant{MerchantID: "M1"}
 	in := CreatePaymentInput{
-		Merchant: merchant, MerchantOrderID: "CCY", Amount: 1500, Currency: "USD",
+		Merchant: merchant, OrderID: "CCY", Amount: 1500, Currency: "USD",
 	}
 	if _, err := svc.Create(context.Background(), in); err != nil {
 		t.Fatalf("first: %v", err)
@@ -235,7 +235,7 @@ func TestCreate_ConflictOnMethodSwitch(t *testing.T) {
 	svc, _, _ := newSvc(t)
 	merchant := &domain.Merchant{MerchantID: "M1"}
 	in := CreatePaymentInput{
-		Merchant: merchant, MerchantOrderID: "METHOD", Amount: 1000, Currency: "USD", Method: "crypto",
+		Merchant: merchant, OrderID: "METHOD", Amount: 1000, Currency: "USD", Method: "crypto",
 	}
 	if _, err := svc.Create(context.Background(), in); err != nil {
 		t.Fatalf("first: %v", err)
@@ -249,14 +249,14 @@ func TestCreate_ConflictOnMethodSwitch(t *testing.T) {
 }
 
 // TestCreate_ConcurrentCollapsesToSingleRow drives 1k goroutines through
-// Create with the same MerchantOrderID. The MySQL UNIQUE on (merchant_id,
+// Create with the same OrderID. The MySQL UNIQUE on (merchant_id,
 // transaction_id) — modelled by the in-memory store here — must collapse
 // every duplicate onto a single row, and every caller must observe the
 // same response.
 func TestCreate_ConcurrentCollapsesToSingleRow(t *testing.T) {
 	svc, stripeC, store := newSvc(t)
 	merchant := &domain.Merchant{MerchantID: "M1"}
-	in := CreatePaymentInput{Merchant: merchant, MerchantOrderID: "BURST", Amount: 2000, Currency: "USD"}
+	in := CreatePaymentInput{Merchant: merchant, OrderID: "BURST", Amount: 2000, Currency: "USD"}
 
 	const N = 100
 	results := make([]*CreatePaymentResult, N)
@@ -302,9 +302,9 @@ func TestCreate_RejectsInvalid(t *testing.T) {
 	svc, _, _ := newSvc(t)
 	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
 	cases := []CreatePaymentInput{
-		{Merchant: merchant, MerchantOrderID: "", Amount: 1},
-		{Merchant: merchant, MerchantOrderID: "T", Amount: 0},
-		{Merchant: nil, MerchantOrderID: "T", Amount: 1},
+		{Merchant: merchant, OrderID: "", Amount: 1},
+		{Merchant: merchant, OrderID: "T", Amount: 0},
+		{Merchant: nil, OrderID: "T", Amount: 1},
 	}
 	for i, c := range cases {
 		if _, err := svc.Create(context.Background(), c); err == nil {
@@ -313,17 +313,15 @@ func TestCreate_RejectsInvalid(t *testing.T) {
 	}
 }
 
-func TestCreate_MissingTransactionSecretFails(t *testing.T) {
-	stripeC := newStripeStub(t)
-	store := newOrderStore(t)
-	svc := NewPaymentService(stripeC.mock, store.mock, PaymentServiceOptions{
-		DefaultCurrency: "USD",
-		// no TransactionIDSecret
-	})
-	_, err := svc.Create(context.Background(), CreatePaymentInput{
-		Merchant: &domain.Merchant{MerchantID: "M1"}, MerchantOrderID: "X", Amount: 1, Currency: "USD",
-	})
-	if err == nil {
-		t.Fatal("expected error when TransactionIDSecret missing")
+func TestCreate_RejectsInvalidOrderID(t *testing.T) {
+	svc, _, _ := newSvc(t)
+	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
+	for _, bad := range []string{"has space", "with#hash", strings.Repeat("a", 65)} {
+		_, err := svc.Create(context.Background(), CreatePaymentInput{
+			Merchant: merchant, OrderID: bad, Amount: 1, Currency: "USD",
+		})
+		if !errors.Is(err, ErrInvalidRequest) {
+			t.Errorf("OrderID=%q want ErrInvalidRequest, got %v", bad, err)
+		}
 	}
 }

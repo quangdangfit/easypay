@@ -75,10 +75,12 @@ func stripeCheckoutURL(sessionID string) string {
 
 // Resolve returns the Stripe Checkout URL for an order. Multi-tier with
 // metrics and graceful degradation; see struct doc.
-func (r *checkoutResolver) Resolve(ctx context.Context, orderID string) (string, error) {
+func (r *checkoutResolver) Resolve(ctx context.Context, merchantID, orderID string) (string, error) {
+	cacheKey := merchantID + ":" + orderID
+
 	// Tier 1: in-process LRU.
 	if r.urlCache != nil {
-		if url, ok := r.urlCache.Get(orderID); ok {
+		if url, ok := r.urlCache.Get(cacheKey); ok {
 			middleware.CheckoutResolveResult.WithLabelValues("cached_local").Inc()
 			return url, nil
 		}
@@ -87,7 +89,7 @@ func (r *checkoutResolver) Resolve(ctx context.Context, orderID string) (string,
 	// Tier 2: MySQL row. If the row has a stripe_session_id, reconstruct
 	// the URL deterministically — no Stripe call needed.
 	t0 := time.Now()
-	order, err := r.repo.GetByOrderID(ctx, orderID)
+	order, err := r.repo.GetByMerchantOrderID(ctx, merchantID, orderID)
 	middleware.CheckoutResolveDuration.WithLabelValues("db_lookup").Observe(time.Since(t0).Seconds())
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -99,7 +101,7 @@ func (r *checkoutResolver) Resolve(ctx context.Context, orderID string) (string,
 	}
 	if order.StripeSessionID != "" {
 		url := stripeCheckoutURL(order.StripeSessionID)
-		r.cacheURL(orderID, url)
+		r.cacheURL(cacheKey, url)
 		middleware.CheckoutResolveResult.WithLabelValues("cached_db").Inc()
 		return url, nil
 	}
@@ -108,19 +110,19 @@ func (r *checkoutResolver) Resolve(ctx context.Context, orderID string) (string,
 	// Acquire a per-order lock so concurrent first-clicks don't all hit
 	// Stripe.
 	t0 = time.Now()
-	lock, err := r.locker.Acquire(ctx, "checkout:"+orderID, 10*time.Second)
+	lock, err := r.locker.Acquire(ctx, "checkout:"+cacheKey, 10*time.Second)
 	middleware.CheckoutResolveDuration.WithLabelValues("lock_acquire").Observe(time.Since(t0).Seconds())
 	if err != nil {
 		// Someone else is creating it — quick retry on the read path.
 		time.Sleep(150 * time.Millisecond)
-		return r.resolveAfterLock(ctx, orderID)
+		return r.resolveAfterLock(ctx, merchantID, orderID, cacheKey)
 	}
 	defer func() { _ = lock.Release(ctx) }()
 
 	// Re-check under lock — another pod may have just persisted the session.
-	if cached, getErr := r.repo.GetByOrderID(ctx, orderID); getErr == nil && cached != nil && cached.StripeSessionID != "" {
+	if cached, getErr := r.repo.GetByMerchantOrderID(ctx, merchantID, orderID); getErr == nil && cached != nil && cached.StripeSessionID != "" {
 		url := stripeCheckoutURL(cached.StripeSessionID)
-		r.cacheURL(orderID, url)
+		r.cacheURL(cacheKey, url)
 		return url, nil
 	}
 
@@ -156,25 +158,25 @@ func (r *checkoutResolver) Resolve(ctx context.Context, orderID string) (string,
 
 	// Persist + warm cache. session.URL is what Stripe returned; we store
 	// the session_id (not the URL) and reconstruct on subsequent reads.
-	if err := r.repo.UpdateCheckout(ctx, orderID, session.ID, session.PaymentIntentID); err != nil {
-		logger.L().Warn("update checkout persist failed", "order_id", orderID, "err", err)
+	if err := r.repo.UpdateCheckout(ctx, merchantID, orderID, session.ID, session.PaymentIntentID); err != nil {
+		logger.L().Warn("update checkout persist failed", "merchant_id", merchantID, "order_id", orderID, "err", err)
 	}
-	r.cacheURL(orderID, session.URL)
+	r.cacheURL(cacheKey, session.URL)
 	middleware.CheckoutResolveResult.WithLabelValues("created").Inc()
 	return session.URL, nil
 }
 
-func (r *checkoutResolver) cacheURL(orderID, url string) {
+func (r *checkoutResolver) cacheURL(cacheKey, url string) {
 	if r.urlCache != nil {
-		r.urlCache.Put(orderID, url)
+		r.urlCache.Put(cacheKey, url)
 	}
 }
 
-func (r *checkoutResolver) resolveAfterLock(ctx context.Context, orderID string) (string, error) {
-	order, err := r.repo.GetByOrderID(ctx, orderID)
+func (r *checkoutResolver) resolveAfterLock(ctx context.Context, merchantID, orderID, cacheKey string) (string, error) {
+	order, err := r.repo.GetByMerchantOrderID(ctx, merchantID, orderID)
 	if err == nil && order != nil && order.StripeSessionID != "" {
 		url := stripeCheckoutURL(order.StripeSessionID)
-		r.cacheURL(orderID, url)
+		r.cacheURL(cacheKey, url)
 		return url, nil
 	}
 	return "", ErrOrderNotReady
@@ -202,7 +204,9 @@ func (r *checkoutResolver) createSession(ctx context.Context, order *domain.Orde
 	if req.CancelURL == "" && r.defaultCancelURL != "" {
 		req.CancelURL = withOrderQuery(r.defaultCancelURL, req.ClientReferenceID)
 	}
-	return r.stripe.CreateCheckoutSession(ctx, req, "checkout:"+req.ClientReferenceID)
+	// Idempotency-Key includes merchant_id since order_id is merchant-scoped.
+	idemKey := "checkout:" + order.MerchantID + ":" + req.ClientReferenceID
+	return r.stripe.CreateCheckoutSession(ctx, req, idemKey)
 }
 
 func withOrderQuery(base, orderID string) string {

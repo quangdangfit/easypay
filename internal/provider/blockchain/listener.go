@@ -28,7 +28,7 @@ func NewListener(
 	c ChainClient,
 	cfg ChainConfig,
 	cursor CursorStore,
-	pendingTxs repository.PendingTxRepository,
+	pendingTxs repository.OnchainTxRepository,
 	orders repository.OrderRepository,
 	publisher kafka.EventPublisher,
 ) *Listener {

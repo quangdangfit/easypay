@@ -23,12 +23,12 @@ type BackfillScanner struct {
 	Client     ChainClient
 	Cfg        ChainConfig
 	Cursor     CursorStore
-	PendingTxs repository.PendingTxRepository
+	PendingTxs repository.OnchainTxRepository
 	Interval   time.Duration
 	BatchSize  uint64
 }
 
-func NewBackfillScanner(c ChainClient, cfg ChainConfig, cur CursorStore, repo repository.PendingTxRepository) *BackfillScanner {
+func NewBackfillScanner(c ChainClient, cfg ChainConfig, cur CursorStore, repo repository.OnchainTxRepository) *BackfillScanner {
 	return &BackfillScanner{
 		Client: c, Cfg: cfg, Cursor: cur, PendingTxs: repo,
 		Interval:  5 * time.Minute,
@@ -105,7 +105,7 @@ func (b *BackfillScanner) persist(ctx context.Context, lg types.Log) {
 	if err != nil {
 		return
 	}
-	tx := &domain.PendingTx{
+	tx := &domain.OnchainTransaction{
 		TxHash:          hash,
 		BlockNumber:     lg.BlockNumber,
 		OrderID:         parsed.OrderID,
@@ -114,7 +114,7 @@ func (b *BackfillScanner) persist(ctx context.Context, lg types.Log) {
 		Amount:          new(big.Int).Set(parsed.Amount),
 		ChainID:         b.Cfg.ChainID,
 		RequiredConfirm: b.Cfg.RequiredConfirmations,
-		Status:          domain.PendingTxStatusPending,
+		Status:          domain.OnchainTxStatusPending,
 	}
 	if err := b.PendingTxs.Create(ctx, tx); err != nil {
 		// Likely a UNIQUE conflict from a race with the subscriber — ignore.

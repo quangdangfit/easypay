@@ -16,7 +16,7 @@ under ~300 lines.
 | Layer | Tech |
 |---|---|
 | Language / framework | Go 1.25+, Fiber, `database/sql`, `slog` |
-| Datastore | MySQL 8 sharded by `merchant_id` (16 tables `orders_00`..`orders_0f`), Redis 7 |
+| Datastore | MySQL 8 (single `transactions` table, logical shard via `merchants.shard_index`), Redis 7 |
 | Async bus | Kafka (KRaft) — settlement callback notifications only |
 | Payments | Stripe (PaymentIntents + Checkout Sessions), go-ethereum |
 | Test | testcontainers-go (real MySQL + Redis + Kafka) |
@@ -26,19 +26,18 @@ under ~300 lines.
 ## Core Flow — Stripe payment (95% of traffic)
 
 ```
-POST /api/payments {merchant_order_id, amount, currency, ...}
+POST /api/payments {order_id, amount, currency, ...}
 │
 ├── middleware: HMAC-SHA256(payload, merchant.secret_key) + rate limit
 │
 ├── service.payment_service.Create:
-│   ├── 1. transaction_id = HMAC(txnSecret, merchant_id || ":" || merchant_order_id)[:16]
-│   │   order_id      = ShardOf(merchant_id) || transaction_id[1..12]   (12B, shard byte first)
-│   ├── 2. INSERT INTO orders_<shard> (...) VALUES (...)  — sync
+│   ├── 1. transaction_id = sha256(merchant_id || ":" || order_id)[:16]   (32 hex chars)
+│   ├── 2. INSERT INTO transactions (...) VALUES (...)  — sync
 │   │   ├── 1062 (UNIQUE on (merchant_id, transaction_id)) → SELECT existing → return cached response
 │   │   └── OK → continue
 │   ├── 3. (Eager) Stripe.CreateCheckoutSession(idempotency_key=transaction_id_hex)
 │   │           → UPDATE row SET stripe_session, stripe_pi_id
-│   │   (Lazy)  → build /pay/:order_id?t=<token> URL, no Stripe call
+│   │   (Lazy)  → build /pay/:merchant_id/:order_id?t=<token> URL, no Stripe call
 │   └── 4. Return 201 + {order_id, transaction_id, checkout_url, status}
 │
 ├── POST /webhook/stripe (Stripe → us):
@@ -46,8 +45,8 @@ POST /api/payments {merchant_order_id, amount, currency, ...}
 │   ├── Dedupe on Stripe event.id (Redis SETNX)
 │   ├── Cross-check: GET /v1/payment_intents/{id}
 │   ├── Map event.type → status: succeeded→paid, failed→failed, refunded→refunded
-│   ├── UPDATE orders_<shard> by order_id (shard byte routes the write)
-│   │   — UPDATE 0 rows is now a hard 5xx (Stripe retries; ops alerts)
+│   ├── UPDATE transactions WHERE merchant_id=? AND order_id=?  (metadata carries both)
+│   │   — UPDATE 0 rows is a hard 5xx (Stripe retries; ops alerts)
 │   └── Kafka produce → payment.confirmed
 │
 ├── consumer/settlement_consumer.go:
@@ -55,17 +54,17 @@ POST /api/payments {merchant_order_id, amount, currency, ...}
 │       POST merchant callback (HMAC-signed). Event itself doesn't carry the URL —
 │       merchants can rotate without re-publishing.
 │
-└── service/reconciliation.go (cron 5m, fan-out across shards):
-    └── SELECT orders WHERE status IN ('created','pending') AND created_at < NOW()-10min
+└── service/reconciliation.go (cron 5m):
+    └── SELECT FROM transactions WHERE status IN ('created','pending') AND created_at < NOW()-10min
         → GET /v1/payment_intents/{id} → force-confirm if Stripe says succeeded
 ```
 
 **Why sync write (no async batch insert, no Redis idempotency)?** The MySQL
 UNIQUE on `(merchant_id, transaction_id)` is the single dedupe layer. Two
-concurrent Create calls with the same MerchantOrderID derive the same
-`transaction_id` and `order_id`; one wins INSERT, the other gets 1062,
-falls back to GetByTransactionID, returns the winner's row. No Bloom
-filter, no `idem:*` Redis cache, no pending-order Redis snapshot, no
+concurrent Create calls with the same `order_id` derive the same
+`transaction_id`; one wins INSERT, the other gets 1062, falls back to
+GetByTransactionID, returns the winner's row. No Bloom filter, no
+`idem:*` Redis cache, no pending-order Redis snapshot, no
 `payment_consumer` — strictly fewer moving parts, strictly stronger
 consistency. Trade-off: write latency ≈ 15–25ms (vs 5ms Kafka publish);
 absorbed by the Stripe call latency in eager mode.
@@ -109,9 +108,10 @@ provider/blockchain/confirmation.go (per block):
 
 ### Idempotency
 - Every write endpoint idempotent. **Single layer: MySQL UNIQUE.**
-- Merchant supplies `merchant_order_id`; service derives
-  `transaction_id = HMAC-SHA256(txnSecret, merchant_id || ":" || merchant_order_id)[:16]`
-  and `order_id = ShardOf(merchant_id) || transaction_id[1..12]`.
+- Merchant supplies `order_id` (VARCHAR(64), `[A-Za-z0-9._:-]`); service
+  derives `transaction_id = sha256(merchant_id || ":" || order_id)[:16]`
+  (32 hex chars). Two retries with the same input collapse onto the same
+  row via the UNIQUE on `(merchant_id, transaction_id)`.
 - Stripe `Idempotency-Key = transaction_id` hex (32 chars).
 - Webhook dedupe on Stripe `event.id` (Redis SETNX, 24h TTL).
 
@@ -121,18 +121,25 @@ provider/blockchain/confirmation.go (per block):
 - Consumer: manual offset commit AFTER successful handle.
 - DLQ: `payment.confirmed.dlq` after 3 retries.
 
-### MySQL — sharded
-- 16 physical tables `orders_00`..`orders_0f`. ShardOf = FNV-32a(merchant_id) mod 16.
-- `order_id[0]` is the shard byte → reads by order_id (webhook, hosted checkout) route to one shard.
-- Schema is fixed-width binary: `merchant_id VARBINARY(16)`, `transaction_id BINARY(16)`,
-  `order_id BINARY(12)`, `currency_code SMALLINT` (ISO 4217 numeric), `status TINYINT`,
-  `payment_method TINYINT`. Stripe artefacts are `VARBINARY`. No `checkout_url` column —
-  reconstructed from `stripe_session_id` (`https://checkout.stripe.com/c/pay/{id}`)
-  or signed lazy-token URL on read.
-- Pool: `MaxOpenConns=100`, `MaxIdleConns=25`. `ORDERS_SHARD_DSNS` env var either empty
-  (single MySQL hosts all 16 tables — dev) or a comma list of 16 DSNs (one per shard).
-- All status transitions are single-statement UPDATEs in the row's shard. Parameterized
-  queries always (table name comes from the fixed `ShardTable()` enum).
+### MySQL — single `transactions` table, logical shard
+- One physical table `transactions`, PK `(merchant_id, transaction_id)`,
+  unique `(merchant_id, order_id)`, indexes on `(status, created_at)`
+  and `stripe_pi_id`.
+- Schema mixes fixed-width binary with VARCHAR for the merchant-supplied
+  `order_id`: `merchant_id VARBINARY(16)`, `transaction_id BINARY(16)`,
+  `order_id VARCHAR(64)`, `currency_code SMALLINT` (ISO 4217 numeric),
+  `status TINYINT`, `payment_method TINYINT`. Stripe artefacts are
+  `VARBINARY`. No `checkout_url` column — reconstructed from
+  `stripe_session_id` (`https://checkout.stripe.com/c/pay/{id}`) or signed
+  lazy-token URL on read.
+- `merchants.shard_index TINYINT` carries the merchant's logical shard
+  (`[0, LOGICAL_SHARD_COUNT)`, default 16). Picked at create time by
+  least-loaded selection. Today every shard lives on the same physical
+  table; future deployments can use this column to partition without
+  changing application code.
+- Pool: `MaxOpenConns=100`, `MaxIdleConns=25`.
+- All status transitions are single-statement UPDATEs keyed on
+  `(merchant_id, order_id)`. Parameterised queries always.
 
 ### Stripe
 - SDK: `github.com/stripe/stripe-go/v76`.
@@ -156,7 +163,7 @@ cmd/server/             entry point
 internal/
   api/                  Fiber router + handlers + middleware
   service/              business logic (payment, webhook, reconciliation, checkout_resolver)
-  repository/           MySQL CRUD — sharded orders repo + merchant + pending_tx + block_cursor
+  repository/           MySQL CRUD — order repo + merchant + onchain_tx + block_cursor
   cache/                Redis: ratelimit, lock, token_bucket, url_cache
   kafka/                producer (PaymentConfirmedEvent only) + base consumer
   consumer/             settlement consumer (the only one)
@@ -165,11 +172,17 @@ internal/
   config/               env loading
   mocks/<pkg>/          gomock-generated mocks (regen: make mocks)
 pkg/                    shared utilities (hmac, response, logger, checkouttoken)
-migrations/             SQL up/down (003 = 16 sharded orders tables)
+migrations/             SQL up/down (single `001_init_schema`)
 integration_test/       testcontainers-go suites
 ```
 
-Key interfaces (defined as ports in their owning package, see source for exact signatures): `OrderRepository`, `MerchantRepository`, `StripeClient`, `EventPublisher`, `FraudChecker`, `Checkouts`, `Locker`, `TokenBucket`, `URLCache`.
+Key interfaces (defined as ports in their owning package, see source for exact signatures): `OrderRepository`, `MerchantRepository`, `OnchainTxRepository`, `StripeClient`, `EventPublisher`, `FraudChecker`, `Payments`, `Webhooks`, `Checkouts`, `Merchants`, `Locker`, `TokenBucket`, `URLCache`.
+
+### Admin
+
+`POST /admin/merchants` (header `X-Admin-Key: $ADMIN_API_KEY`) creates a
+merchant, generates an api_key/secret_key pair, and assigns the
+least-loaded `shard_index`. Mounted only when `ADMIN_API_KEY` is set.
 
 ---
 

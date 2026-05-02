@@ -48,31 +48,12 @@ func run() error {
 	log := logger.L()
 	log.Info("starting easypay", "env", cfg.App.Env, "port", cfg.App.Port)
 
-	// MySQL — primary pool for merchants + blockchain tables.
+	// MySQL — single pool for merchants + transactions + onchain tables.
 	db, err := repository.OpenMySQL(cfg.DB)
 	if err != nil {
 		return fmt.Errorf("mysql: %w", err)
 	}
 	defer func() { _ = db.Close() }()
-
-	// MySQL — sharded pool(s) for the orders table family. Falls back to
-	// the primary pool when ORDERS_SHARD_DSNS is unset.
-	shardPools, err := repository.OpenShardPools(cfg.DB.ShardDSNs, cfg.DB)
-	if err != nil {
-		return fmt.Errorf("orders shards: %w", err)
-	}
-	defer func() {
-		// Avoid double-close when shards collocate on the primary pool.
-		seen := map[string]bool{}
-		for _, p := range shardPools {
-			key := fmt.Sprintf("%p", p)
-			if seen[key] || p == db {
-				continue
-			}
-			seen[key] = true
-			_ = p.Close()
-		}
-	}()
 
 	// Redis.
 	rc, err := cache.NewRedis(cfg.Redis)
@@ -88,11 +69,8 @@ func run() error {
 	defer func() { _ = publisher.Close() }()
 
 	// Repos & cache helpers.
-	orderRepo, err := repository.NewShardedOrderRepository(shardPools)
-	if err != nil {
-		return fmt.Errorf("sharded order repo: %w", err)
-	}
-	merchantRepo := repository.NewMerchantRepository(db)
+	orderRepo := repository.NewOrderRepository(db)
+	merchantRepo := repository.NewMerchantRepository(db, cfg.App.LogicalShardCount)
 	rl := cache.NewRateLimiter(rc)
 	locker := cache.NewLocker(rc)
 	urlCache := cache.NewURLCache(10000, 5*time.Second)
@@ -112,17 +90,17 @@ func run() error {
 
 	// Service + handlers.
 	paySvc := service.NewPaymentService(stripeClient, orderRepo, service.PaymentServiceOptions{
-		DefaultCurrency:     cfg.Stripe.DefaultCurrency,
-		CryptoContract:      cfg.Blockchain.ContractAddress,
-		CryptoChainID:       cfg.Blockchain.ChainID,
-		LazyCheckout:        cfg.App.LazyCheckout,
-		PublicBaseURL:       cfg.App.PublicBaseURL,
-		CheckoutSecret:      cfg.App.CheckoutTokenSecret,
-		CheckoutTokenTTL:    cfg.App.CheckoutTokenTTL,
-		DefaultSuccessURL:   cfg.App.CheckoutDefaultSuccessURL,
-		DefaultCancelURL:    cfg.App.CheckoutDefaultCancelURL,
-		TransactionIDSecret: cfg.App.TransactionIDSecret,
+		DefaultCurrency:   cfg.Stripe.DefaultCurrency,
+		CryptoContract:    cfg.Blockchain.ContractAddress,
+		CryptoChainID:     cfg.Blockchain.ChainID,
+		LazyCheckout:      cfg.App.LazyCheckout,
+		PublicBaseURL:     cfg.App.PublicBaseURL,
+		CheckoutSecret:    cfg.App.CheckoutTokenSecret,
+		CheckoutTokenTTL:  cfg.App.CheckoutTokenTTL,
+		DefaultSuccessURL: cfg.App.CheckoutDefaultSuccessURL,
+		DefaultCancelURL:  cfg.App.CheckoutDefaultCancelURL,
 	})
+	merchantSvc := service.NewMerchantService(merchantRepo)
 	webhookSvc := service.NewWebhookService(stripeClient, orderRepo, publisher, rc, cfg.Stripe.WebhookSecret)
 	checkoutResolver := service.NewCheckoutResolver(service.CheckoutResolverOptions{
 		Stripe:            stripeClient,
@@ -138,6 +116,7 @@ func run() error {
 	refundH := handler.NewRefundHandler(webhookSvc)
 	webhookH := handler.NewWebhookHandler(webhookSvc)
 	checkoutH := handler.NewCheckoutHandler(checkoutResolver, cfg.App.CheckoutTokenSecret)
+	merchantH := handler.NewMerchantHandler(merchantSvc)
 
 	healthH := handler.NewHealthHandler(
 		&repository.MySQLPinger{DB: db},
@@ -152,9 +131,11 @@ func run() error {
 		Refund:        refundH,
 		Webhook:       webhookH,
 		Checkout:      checkoutH,
+		Merchant:      merchantH,
 		Merchants:     merchantRepo,
 		RateLimiter:   rl,
 		HMACSkew:      cfg.Security.HMACTimestampSkew,
+		AdminAPIKey:   cfg.Security.AdminAPIKey,
 	})
 
 	// Settlement consumer for payment.confirmed → merchant callback.
@@ -194,7 +175,7 @@ func run() error {
 		if err != nil {
 			log.Warn("blockchain client unavailable, listener disabled", "err", err)
 		} else {
-			pendingTxRepo := repository.NewPendingTxRepository(db)
+			onchainTxRepo := repository.NewOnchainTxRepository(db)
 			cursor := blockchain.NewMySQLCursor(db)
 			chainCfg := blockchain.ChainConfig{
 				ChainID:               cfg.Blockchain.ChainID,
@@ -202,7 +183,7 @@ func run() error {
 				RequiredConfirmations: cfg.Blockchain.RequiredConfirmations,
 				StartBlock:            cfg.Blockchain.StartBlock,
 			}
-			listener := blockchain.NewListener(chainClient, chainCfg, cursor, pendingTxRepo, orderRepo, publisher)
+			listener := blockchain.NewListener(chainClient, chainCfg, cursor, onchainTxRepo, orderRepo, publisher)
 			go listener.Run(consumerCtx)
 		}
 	}

@@ -70,3 +70,17 @@ func (mr *MockMerchantRepositoryMockRecorder) GetByMerchantID(ctx, merchantID an
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByMerchantID", reflect.TypeOf((*MockMerchantRepository)(nil).GetByMerchantID), ctx, merchantID)
 }
+
+// Insert mocks base method.
+func (m_2 *MockMerchantRepository) Insert(ctx context.Context, m *domain.Merchant) error {
+	m_2.ctrl.T.Helper()
+	ret := m_2.ctrl.Call(m_2, "Insert", ctx, m)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Insert indicates an expected call of Insert.
+func (mr *MockMerchantRepositoryMockRecorder) Insert(ctx, m any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Insert", reflect.TypeOf((*MockMerchantRepository)(nil).Insert), ctx, m)
+}

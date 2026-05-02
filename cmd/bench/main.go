@@ -196,7 +196,7 @@ func run(cfg config) error {
 
 func doCreate(ctx context.Context, c *http.Client, cfg config, rng *rand.Rand) (orderID string, status int, err error) {
 	body := map[string]any{
-		"merchant_order_id":    fmt.Sprintf("BENCH-%d-%s", time.Now().UnixNano(), uuid.NewString()[:8]),
+		"order_id":             fmt.Sprintf("BENCH-%d-%s", time.Now().UnixNano(), uuid.NewString()[:8]),
 		"amount":               int64(100 + rng.Intn(99900)), // $1.00 - $1000
 		"currency":             "USD",
 		"payment_method_types": []string{"card"},
@@ -273,8 +273,8 @@ func seedMerchant(cfg config) error {
 	defer db.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	const q = `INSERT INTO merchants (merchant_id, name, api_key, secret_key, rate_limit, status)
-	           VALUES (?, ?, ?, ?, ?, 'active')
+	const q = `INSERT INTO merchants (merchant_id, name, api_key, secret_key, rate_limit, status, shard_index)
+	           VALUES (?, ?, ?, ?, ?, 'active', 0)
 	           ON DUPLICATE KEY UPDATE
 	             secret_key = VALUES(secret_key),
 	             rate_limit = VALUES(rate_limit),

@@ -22,10 +22,10 @@ func TestBlockchainTxHashDedup(t *testing.T) {
 	env := SetupEnv(t)
 	defer env.Cleanup(t)
 
-	repo := repository.NewPendingTxRepository(env.DB)
+	repo := repository.NewOnchainTxRepository(env.DB)
 
 	hash := "0x" + strings.Repeat("ab", 32) // 66-char hex
-	tx := &domain.PendingTx{
+	tx := &domain.OnchainTransaction{
 		TxHash:          hash,
 		BlockNumber:     1234,
 		OrderID:         "ord-chain-1",
@@ -35,21 +35,21 @@ func TestBlockchainTxHashDedup(t *testing.T) {
 		ChainID:         11155111,
 		Confirmations:   0,
 		RequiredConfirm: 12,
-		Status:          domain.PendingTxStatusPending,
+		Status:          domain.OnchainTxStatusPending,
 	}
 	if err := repo.Create(context.Background(), tx); err != nil {
 		t.Fatalf("first insert: %v", err)
 	}
 
 	// Same tx_hash, different other fields — should be rejected.
-	dup := &domain.PendingTx{
+	dup := &domain.OnchainTransaction{
 		TxHash:          hash,
 		BlockNumber:     5678,
 		OrderID:         "ord-chain-2",
 		Amount:          big.NewInt(1),
 		ChainID:         11155111,
 		RequiredConfirm: 12,
-		Status:          domain.PendingTxStatusPending,
+		Status:          domain.OnchainTxStatusPending,
 	}
 	err := repo.Create(context.Background(), dup)
 	if err == nil {

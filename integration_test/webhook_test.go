@@ -91,7 +91,7 @@ func TestStripeWebhookFlow(t *testing.T) {
 		if err := svc.Process(context.Background(), payload, sig); err != nil {
 			t.Fatalf("process: %v", err)
 		}
-		o, _ := orderRepo.GetByOrderID(context.Background(), main.order.OrderID)
+		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), main.order.MerchantID, main.order.OrderID)
 		if o.Status != domain.OrderStatusPaid {
 			t.Fatalf("status: got %s want paid", o.Status)
 		}
@@ -116,7 +116,7 @@ func TestStripeWebhookFlow(t *testing.T) {
 		if err := svc.Process(context.Background(), payload, sig); err != nil {
 			t.Fatalf("process: %v", err)
 		}
-		o, _ := orderRepo.GetByOrderID(context.Background(), s.order.OrderID)
+		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), s.order.MerchantID, s.order.OrderID)
 		if o.Status != domain.OrderStatusFailed {
 			t.Fatalf("status: got %s want failed", o.Status)
 		}
@@ -142,7 +142,7 @@ func TestStripeWebhookFlow(t *testing.T) {
 		if err := svc.Process(context.Background(), payload, sig); err != nil {
 			t.Fatalf("process: %v", err)
 		}
-		o, _ := orderRepo.GetByOrderID(context.Background(), s.order.OrderID)
+		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), s.order.MerchantID, s.order.OrderID)
 		if o.Status != domain.OrderStatusRefunded {
 			t.Fatalf("status: got %s want refunded", o.Status)
 		}
@@ -184,6 +184,11 @@ func TestStripeWebhookFlow(t *testing.T) {
 
 func mustEvent(t *testing.T, eventID, piID, orderID, eventType string) []byte {
 	t.Helper()
+	return mustEventForMerchant(t, eventID, piID, orderID, eventType, "M_WB")
+}
+
+func mustEventForMerchant(t *testing.T, eventID, piID, orderID, eventType, merchantID string) []byte {
+	t.Helper()
 	body := map[string]any{
 		"id":      eventID,
 		"type":    eventType,
@@ -196,7 +201,7 @@ func mustEvent(t *testing.T, eventID, piID, orderID, eventType string) []byte {
 				"status": "succeeded",
 				"metadata": map[string]string{
 					"order_id":    orderID,
-					"merchant_id": "M_WB",
+					"merchant_id": merchantID,
 				},
 			},
 		},

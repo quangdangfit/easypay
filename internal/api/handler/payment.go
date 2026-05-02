@@ -21,12 +21,12 @@ func NewPaymentHandler(svc service.Payments) *PaymentHandler {
 
 // createPaymentRequest is the JSON body accepted by POST /api/payments.
 //
-// MerchantOrderID is the merchant's idempotency key — typically their own
-// internal order/cart id. The gateway derives transaction_id and order_id
-// deterministically from (merchant_id, merchant_order_id), so two retries
-// with the same MerchantOrderID always collapse to the same row.
+// OrderID is the merchant's own idempotency key (their order/cart id).
+// The gateway derives transaction_id deterministically from
+// (merchant_id, order_id), so two retries with the same OrderID always
+// collapse to the same row.
 type createPaymentRequest struct {
-	MerchantOrderID    string   `json:"merchant_order_id"`
+	OrderID            string   `json:"order_id"`
 	Amount             int64    `json:"amount"`
 	Currency           string   `json:"currency"`
 	PaymentMethodTypes []string `json:"payment_method_types"`
@@ -49,7 +49,7 @@ func (h *PaymentHandler) Create(c *fiber.Ctx) error {
 
 	in := service.CreatePaymentInput{
 		Merchant:           merchant,
-		MerchantOrderID:    req.MerchantOrderID,
+		OrderID:            req.OrderID,
 		Amount:             req.Amount,
 		Currency:           req.Currency,
 		PaymentMethodTypes: req.PaymentMethodTypes,

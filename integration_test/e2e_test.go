@@ -66,14 +66,13 @@ func TestFullPaymentFlow_E2E(t *testing.T) {
 	defer func() { _ = publisher.Close() }()
 
 	orderRepo := repository.NewOrderRepository(env.DB)
-	merchantRepo := repository.NewMerchantRepository(env.DB)
+	merchantRepo := repository.NewMerchantRepository(env.DB, 16)
 	stripeMock := NewMockStripe()
 
 	paySvc := service.NewPaymentService(stripeMock, orderRepo, service.PaymentServiceOptions{
-		DefaultCurrency:     "USD",
-		CryptoContract:      "0xCONTRACT",
-		CryptoChainID:       11155111,
-		TransactionIDSecret: txnSecretForTests,
+		DefaultCurrency: "USD",
+		CryptoContract:  "0xCONTRACT",
+		CryptoChainID:   11155111,
 	})
 	webhookSvc := service.NewWebhookService(stripeMock, orderRepo, publisher, env.Redis, webhookSecret)
 
@@ -103,10 +102,10 @@ func TestFullPaymentFlow_E2E(t *testing.T) {
 	// ── Step 1: Create payment ──────────────────────────────────────────
 	merchant := &domain.Merchant{MerchantID: merchantID, SecretKey: merchantSec, RateLimit: 100}
 	res, err := paySvc.Create(context.Background(), service.CreatePaymentInput{
-		Merchant:        merchant,
-		MerchantOrderID: "E2E-1",
-		Amount:          2500,
-		Currency:        "USD",
+		Merchant: merchant,
+		OrderID:  "E2E-1",
+		Amount:   2500,
+		Currency: "USD",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -116,7 +115,7 @@ func TestFullPaymentFlow_E2E(t *testing.T) {
 	}
 
 	// ── Step 2: Row must be in MySQL synchronously ──────────────────────
-	landed, err := orderRepo.GetByOrderID(context.Background(), res.OrderID)
+	landed, err := orderRepo.GetByMerchantOrderID(context.Background(), merchant.MerchantID, res.OrderID)
 	if err != nil {
 		t.Fatalf("order %s not found after Create: %v", res.OrderID, err)
 	}
@@ -128,14 +127,14 @@ func TestFullPaymentFlow_E2E(t *testing.T) {
 	}
 
 	// ── Step 3: Synthesize the Stripe webhook and process it ────────────
-	payload := mustEvent(t, "evt_e2e_succeeded", res.StripePaymentIntentID,
-		res.OrderID, "payment_intent.succeeded")
+	payload := mustEventForMerchant(t, "evt_e2e_succeeded", res.StripePaymentIntentID,
+		res.OrderID, "payment_intent.succeeded", merchantID)
 	sig := stripe.SignPayload(payload, webhookSecret, time.Now().Unix())
 	if err := webhookSvc.Process(context.Background(), payload, sig); err != nil {
 		t.Fatalf("webhook process: %v", err)
 	}
 
-	o, _ := orderRepo.GetByOrderID(context.Background(), res.OrderID)
+	o, _ := orderRepo.GetByMerchantOrderID(context.Background(), merchant.MerchantID, res.OrderID)
 	if o.Status != domain.OrderStatusPaid {
 		t.Fatalf("status after webhook: got %s want paid", o.Status)
 	}

@@ -134,18 +134,18 @@ func (m *MockCheckouts) EXPECT() *MockCheckoutsMockRecorder {
 }
 
 // Resolve mocks base method.
-func (m *MockCheckouts) Resolve(ctx context.Context, orderID string) (string, error) {
+func (m *MockCheckouts) Resolve(ctx context.Context, merchantID, orderID string) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Resolve", ctx, orderID)
+	ret := m.ctrl.Call(m, "Resolve", ctx, merchantID, orderID)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Resolve indicates an expected call of Resolve.
-func (mr *MockCheckoutsMockRecorder) Resolve(ctx, orderID any) *gomock.Call {
+func (mr *MockCheckoutsMockRecorder) Resolve(ctx, merchantID, orderID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Resolve", reflect.TypeOf((*MockCheckouts)(nil).Resolve), ctx, orderID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Resolve", reflect.TypeOf((*MockCheckouts)(nil).Resolve), ctx, merchantID, orderID)
 }
 
 // MockReconciler is a mock of Reconciler interface.
@@ -184,4 +184,43 @@ func (m *MockReconciler) Run(ctx context.Context) error {
 func (mr *MockReconcilerMockRecorder) Run(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockReconciler)(nil).Run), ctx)
+}
+
+// MockMerchants is a mock of Merchants interface.
+type MockMerchants struct {
+	ctrl     *gomock.Controller
+	recorder *MockMerchantsMockRecorder
+	isgomock struct{}
+}
+
+// MockMerchantsMockRecorder is the mock recorder for MockMerchants.
+type MockMerchantsMockRecorder struct {
+	mock *MockMerchants
+}
+
+// NewMockMerchants creates a new mock instance.
+func NewMockMerchants(ctrl *gomock.Controller) *MockMerchants {
+	mock := &MockMerchants{ctrl: ctrl}
+	mock.recorder = &MockMerchantsMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockMerchants) EXPECT() *MockMerchantsMockRecorder {
+	return m.recorder
+}
+
+// Create mocks base method.
+func (m *MockMerchants) Create(ctx context.Context, in service.CreateMerchantInput) (*service.CreateMerchantResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Create", ctx, in)
+	ret0, _ := ret[0].(*service.CreateMerchantResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Create indicates an expected call of Create.
+func (mr *MockMerchantsMockRecorder) Create(ctx, in any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockMerchants)(nil).Create), ctx, in)
 }

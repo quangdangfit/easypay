@@ -1,4 +1,4 @@
 DROP TABLE IF EXISTS block_cursors;
+DROP TABLE IF EXISTS onchain_transactions;
+DROP TABLE IF EXISTS transactions;
 DROP TABLE IF EXISTS merchants;
-DROP TABLE IF EXISTS pending_txs;
-DROP TABLE IF EXISTS orders;

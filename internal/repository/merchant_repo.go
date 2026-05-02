@@ -16,19 +16,33 @@ var ErrMerchantNotFound = errors.New("merchant not found")
 type MerchantRepository interface {
 	GetByAPIKey(ctx context.Context, apiKey string) (*domain.Merchant, error)
 	GetByMerchantID(ctx context.Context, merchantID string) (*domain.Merchant, error)
+	// Insert persists a merchant after picking the least-loaded shard_index
+	// in [0, LogicalShardCount). The picked index is written back into m.
+	Insert(ctx context.Context, m *domain.Merchant) error
 }
 
 type merchantRepo struct {
-	db    *sql.DB
-	cache *lruCache
+	db                *sql.DB
+	cache             *lruCache
+	logicalShardCount uint8
 }
 
-func NewMerchantRepository(db *sql.DB) MerchantRepository {
-	return &merchantRepo{db: db, cache: newLRUCache(1024, 5*time.Minute)}
+// NewMerchantRepository builds a merchant repo whose Insert path picks
+// shards in [0, logicalShardCount). logicalShardCount must be >= 1; values
+// of 0 are clamped up to 1 to keep the picker safe.
+func NewMerchantRepository(db *sql.DB, logicalShardCount uint8) MerchantRepository {
+	if logicalShardCount == 0 {
+		logicalShardCount = 1
+	}
+	return &merchantRepo{
+		db:                db,
+		cache:             newLRUCache(1024, 5*time.Minute),
+		logicalShardCount: logicalShardCount,
+	}
 }
 
 const merchantCols = `id, merchant_id, name, api_key, secret_key,
-		COALESCE(callback_url,''), rate_limit, status, created_at`
+		COALESCE(callback_url,''), rate_limit, status, shard_index, created_at`
 
 func (r *merchantRepo) GetByAPIKey(ctx context.Context, apiKey string) (*domain.Merchant, error) {
 	if m, ok := r.cache.get("api:" + apiKey); ok {
@@ -58,11 +72,81 @@ func (r *merchantRepo) GetByMerchantID(ctx context.Context, merchantID string) (
 	return m, nil
 }
 
+func (r *merchantRepo) Insert(ctx context.Context, m *domain.Merchant) error {
+	idx, err := r.pickLeastLoadedShard(ctx)
+	if err != nil {
+		return fmt.Errorf("pick shard: %w", err)
+	}
+	m.ShardIndex = idx
+	if m.Status == "" {
+		m.Status = domain.MerchantStatusActive
+	}
+	if m.RateLimit == 0 {
+		m.RateLimit = 1000
+	}
+	const q = `INSERT INTO merchants
+		(merchant_id, name, api_key, secret_key, callback_url, rate_limit, status, shard_index)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	res, err := r.db.ExecContext(ctx, q,
+		m.MerchantID, m.Name, m.APIKey, m.SecretKey,
+		nullString(m.CallbackURL), m.RateLimit, string(m.Status), m.ShardIndex,
+	)
+	if err != nil {
+		if isDuplicateKeyErr(err) {
+			return fmt.Errorf("merchant exists: %w", err)
+		}
+		return fmt.Errorf("insert merchant: %w", err)
+	}
+	if id, _ := res.LastInsertId(); id != 0 {
+		m.ID = id
+	}
+	return nil
+}
+
+// pickLeastLoadedShard counts merchants per shard_index in
+// [0, logicalShardCount) and returns the index with the smallest count.
+// Empty shards (no rows) are treated as count=0 and naturally win on ties.
+// On a tie the smallest index is returned (deterministic).
+func (r *merchantRepo) pickLeastLoadedShard(ctx context.Context) (uint8, error) {
+	const q = `SELECT shard_index, COUNT(*) FROM merchants
+	            WHERE shard_index < ? GROUP BY shard_index`
+	rows, err := r.db.QueryContext(ctx, q, r.logicalShardCount)
+	if err != nil {
+		return 0, fmt.Errorf("count by shard: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	counts := make([]int64, r.logicalShardCount)
+	for rows.Next() {
+		var idx uint8
+		var n int64
+		if err := rows.Scan(&idx, &n); err != nil {
+			return 0, fmt.Errorf("scan shard count: %w", err)
+		}
+		if idx < r.logicalShardCount {
+			counts[idx] = n
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate shard counts: %w", err)
+	}
+
+	best := uint8(0)
+	bestN := counts[0]
+	for i := uint8(1); i < r.logicalShardCount; i++ {
+		if counts[i] < bestN {
+			best = i
+			bestN = counts[i]
+		}
+	}
+	return best, nil
+}
+
 func scanMerchant(row *sql.Row) (*domain.Merchant, error) {
 	var m domain.Merchant
 	var status string
 	if err := row.Scan(&m.ID, &m.MerchantID, &m.Name, &m.APIKey, &m.SecretKey,
-		&m.CallbackURL, &m.RateLimit, &status, &m.CreatedAt); err != nil {
+		&m.CallbackURL, &m.RateLimit, &status, &m.ShardIndex, &m.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrMerchantNotFound
 		}
