@@ -42,6 +42,29 @@ func TestMySQLPinger(t *testing.T) {
 	}
 }
 
+func TestSplitSQLStatements_StripsLineCommentsAndSemicolons(t *testing.T) {
+	// A ';' inside a '--' comment must not split the statement that follows.
+	body := `-- header comment; with a semicolon inside
+--   continuation; and another;
+CREATE TABLE a (
+    id INT
+);
+
+-- divider
+CREATE TABLE b (id INT);
+`
+	got := splitSQLStatements(body)
+	if len(got) != 2 {
+		t.Fatalf("want 2 statements, got %d: %#v", len(got), got)
+	}
+	if !strings.HasPrefix(got[0], "CREATE TABLE a") {
+		t.Errorf("stmt[0] = %q, want CREATE TABLE a ...", got[0])
+	}
+	if !strings.HasPrefix(got[1], "CREATE TABLE b") {
+		t.Errorf("stmt[1] = %q, want CREATE TABLE b ...", got[1])
+	}
+}
+
 // scanOrder error path — pass a row that's been closed to force a scan error.
 func TestScanOrder_ScanError(t *testing.T) {
 	db, mock, _ := sqlmock.New()

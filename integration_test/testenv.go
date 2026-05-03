@@ -139,17 +139,36 @@ func runMigrations(db *sql.DB) error {
 		if err != nil {
 			return err
 		}
-		for _, stmt := range strings.Split(string(b), ";") {
-			s := strings.TrimSpace(stmt)
-			if s == "" {
-				continue
-			}
-			if _, err := db.Exec(s); err != nil {
+		for _, stmt := range splitSQL(string(b)) {
+			if _, err := db.Exec(stmt); err != nil {
 				return fmt.Errorf("apply %s: %w", filepath.Base(f), err)
 			}
 		}
 	}
 	return nil
+}
+
+// splitSQL strips '--' line comments and splits the remainder on ';'.
+// Mirrors repository.splitSQLStatements — a bare split on ';' breaks the
+// moment a comment line contains a semicolon (our schema docstrings do).
+func splitSQL(body string) []string {
+	var sanitized strings.Builder
+	sanitized.Grow(len(body))
+	for _, line := range strings.Split(body, "\n") {
+		if trimmed := strings.TrimLeft(line, " \t"); strings.HasPrefix(trimmed, "--") {
+			continue
+		}
+		sanitized.WriteString(line)
+		sanitized.WriteByte('\n')
+	}
+	parts := strings.Split(sanitized.String(), ";")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // DeriveTransactionID matches payment_service.DeriveTransactionID — tests

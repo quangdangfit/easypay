@@ -70,7 +70,19 @@ func RunMigrationsAll(router ShardRouter, migrationsDir string) error {
 }
 
 func splitSQLStatements(body string) []string {
-	parts := strings.Split(body, ";")
+	// Strip '--' line comments before splitting on ';'. A bare split on ';'
+	// breaks the moment a comment line contains a semicolon, which our
+	// schema docstrings do.
+	var sanitized strings.Builder
+	sanitized.Grow(len(body))
+	for _, line := range strings.Split(body, "\n") {
+		if trimmed := strings.TrimLeft(line, " \t"); strings.HasPrefix(trimmed, "--") {
+			continue
+		}
+		sanitized.WriteString(line)
+		sanitized.WriteByte('\n')
+	}
+	parts := strings.Split(sanitized.String(), ";")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
 		s := strings.TrimSpace(p)
