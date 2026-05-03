@@ -27,7 +27,7 @@ func newStatusApp(repo repository.OrderRepository, merchantID string) *fiber.App
 func TestPaymentStatus_HappyPath(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repo := repomock.NewMockOrderRepository(ctrl)
-	repo.EXPECT().GetByOrderID(gomock.Any(), "ord-1").
+	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), "M1", "ord-1").
 		Return(&domain.Order{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", Status: domain.OrderStatusPaid}, nil)
 
 	app := newStatusApp(repo, "M1")
@@ -43,7 +43,7 @@ func TestPaymentStatus_HappyPath(t *testing.T) {
 func TestPaymentStatus_NotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repo := repomock.NewMockOrderRepository(ctrl)
-	repo.EXPECT().GetByOrderID(gomock.Any(), gomock.Any()).Return(nil, repository.ErrNotFound)
+	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, repository.ErrNotFound)
 
 	app := newStatusApp(repo, "M1")
 	resp, _ := app.Test(httptest.NewRequest("GET", "/api/payments/missing", nil))
@@ -52,14 +52,16 @@ func TestPaymentStatus_NotFound(t *testing.T) {
 	}
 }
 
-func TestPaymentStatus_OtherMerchantHidden(t *testing.T) {
+// TestPaymentStatus_BadOrderIDIsNotFound: invalid order_id char set returns
+// 404 (we don't leak structural validation back to the merchant).
+func TestPaymentStatus_BadOrderIDIsNotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repo := repomock.NewMockOrderRepository(ctrl)
-	repo.EXPECT().GetByOrderID(gomock.Any(), gomock.Any()).
-		Return(&domain.Order{OrderID: "ord-1", MerchantID: "M2"}, nil)
+	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, domain.ErrInvalidOrderID).AnyTimes()
 
 	app := newStatusApp(repo, "M1")
-	resp, _ := app.Test(httptest.NewRequest("GET", "/api/payments/ord-1", nil))
+	resp, _ := app.Test(httptest.NewRequest("GET", "/api/payments/has%20space", nil))
 	if resp.StatusCode != 404 {
 		t.Fatalf("status %d", resp.StatusCode)
 	}

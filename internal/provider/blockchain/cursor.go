@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/quangdangfit/easypay/internal/repository"
 )
 
 type CursorStore interface {
@@ -16,8 +18,11 @@ type mysqlCursor struct {
 	db *sql.DB
 }
 
-func NewMySQLCursor(db *sql.DB) CursorStore {
-	return &mysqlCursor{db: db}
+// NewMySQLCursor returns a block-cursor store rooted on the control-plane
+// pool. block_cursors is keyed by chain_id and shared across the whole
+// service — there's no merchant_id to shard on.
+func NewMySQLCursor(router repository.ShardRouter) CursorStore {
+	return &mysqlCursor{db: router.Control()}
 }
 
 func (c *mysqlCursor) Get(ctx context.Context, chainID int64) (uint64, error) {

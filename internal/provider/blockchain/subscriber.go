@@ -23,12 +23,12 @@ type Subscriber struct {
 	Client     ChainClient
 	Cfg        ChainConfig
 	Cursor     CursorStore
-	PendingTxs repository.PendingTxRepository
+	PendingTxs repository.OnchainTxRepository
 	BackoffMin time.Duration
 	BackoffMax time.Duration
 }
 
-func NewSubscriber(c ChainClient, cfg ChainConfig, cur CursorStore, repo repository.PendingTxRepository) *Subscriber {
+func NewSubscriber(c ChainClient, cfg ChainConfig, cur CursorStore, repo repository.OnchainTxRepository) *Subscriber {
 	return &Subscriber{
 		Client: c, Cfg: cfg, Cursor: cur, PendingTxs: repo,
 		BackoffMin: time.Second,
@@ -93,14 +93,14 @@ func (s *Subscriber) handleLog(ctx context.Context, lg types.Log) error {
 	if existing, err := s.PendingTxs.GetByTxHash(ctx, hash); err == nil && existing != nil {
 		// Dedup: already known.
 		return nil
-	} else if err != nil && !errors.Is(err, repository.ErrPendingTxNotFound) {
+	} else if err != nil && !errors.Is(err, repository.ErrOnchainTxNotFound) {
 		return fmt.Errorf("dedup lookup: %w", err)
 	}
 	parsed, err := ParsePaymentEvent(lg)
 	if err != nil {
 		return fmt.Errorf("parse event: %w", err)
 	}
-	tx := &domain.PendingTx{
+	tx := &domain.OnchainTransaction{
 		TxHash:          hash,
 		BlockNumber:     lg.BlockNumber,
 		OrderID:         parsed.OrderID,
@@ -110,7 +110,7 @@ func (s *Subscriber) handleLog(ctx context.Context, lg types.Log) error {
 		ChainID:         s.Cfg.ChainID,
 		Confirmations:   0,
 		RequiredConfirm: s.Cfg.RequiredConfirmations,
-		Status:          domain.PendingTxStatusPending,
+		Status:          domain.OnchainTxStatusPending,
 	}
 	if err := s.PendingTxs.Create(ctx, tx); err != nil {
 		return fmt.Errorf("persist pending_tx: %w", err)

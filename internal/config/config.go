@@ -3,9 +3,10 @@ package config
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
@@ -42,9 +43,30 @@ type AppConfig struct {
 	// these for `mode=payment` Checkout Sessions.
 	CheckoutDefaultSuccessURL string
 	CheckoutDefaultCancelURL  string
+	// LogicalShardCount caps the number of logical shards merchants are
+	// distributed across via `merchants.shard_index`. Today every shard
+	// lives on the single `transactions` table; future deployments can
+	// partition by this column without changing application code.
+	LogicalShardCount uint8
 }
 
 type DBConfig struct {
+	// DSN is the legacy single-pool form. When Shards is non-empty it is
+	// ignored. When Shards is empty and DSN is set, the router collapses to
+	// a single physical pool — useful for dev/test.
+	DSN          string
+	MaxOpenConns int
+	MaxIdleConns int
+	// Shards is the explicit list of physical pools. Pool index 0 is the
+	// "control plane": home of merchants, onchain_transactions, and
+	// block_cursors. The number of physical shards must divide
+	// AppConfig.LogicalShardCount evenly.
+	Shards []ShardDBConfig
+}
+
+// ShardDBConfig describes one physical MySQL pool. Connection caps fall
+// back to DBConfig.MaxOpenConns / MaxIdleConns when zero.
+type ShardDBConfig struct {
 	DSN          string
 	MaxOpenConns int
 	MaxIdleConns int
@@ -58,7 +80,6 @@ type RedisConfig struct {
 
 type KafkaConfig struct {
 	Brokers        []string
-	TopicEvents    string
 	TopicConfirmed string
 	TopicDLQ       string
 	ConsumerGroup  string
@@ -90,133 +111,298 @@ type BlockchainConfig struct {
 type SecurityConfig struct {
 	HMACSecret        string
 	HMACTimestampSkew time.Duration
+	// AdminAPIKey gates the /admin/* HTTP routes (e.g. POST /admin/merchants).
+	// Compared against the X-Admin-Key request header in constant time.
+	// When empty, admin routes are not mounted.
+	AdminAPIKey string
 }
 
-func Load() (*Config, error) {
-	publicBase := strings.TrimRight(getenv("PUBLIC_BASE_URL", "http://localhost:8080"), "/")
-	cfg := &Config{
-		App: AppConfig{
-			Env:                       getenv("APP_ENV", "development"),
-			Port:                      getenvInt("APP_PORT", 8080),
-			LogLevel:                  getenv("LOG_LEVEL", "info"),
-			PublicBaseURL:             publicBase,
-			LazyCheckout:              getenvBool("LAZY_CHECKOUT", false),
-			CheckoutTokenSecret:       getenv("CHECKOUT_TOKEN_SECRET", ""),
-			CheckoutTokenTTL:          time.Duration(getenvInt("CHECKOUT_TOKEN_TTL_SECONDS", 86400)) * time.Second,
-			StripeRateLimit:           getenvInt("STRIPE_RATE_LIMIT", 80),
-			CheckoutDefaultSuccessURL: getenv("CHECKOUT_DEFAULT_SUCCESS_URL", publicBase+"/checkout/success"),
-			CheckoutDefaultCancelURL:  getenv("CHECKOUT_DEFAULT_CANCEL_URL", publicBase+"/checkout/cancel"),
-		},
-		DB: DBConfig{
-			DSN:          mustGetenv("DB_DSN"),
-			MaxOpenConns: getenvInt("DB_MAX_OPEN_CONNS", 100),
-			MaxIdleConns: getenvInt("DB_MAX_IDLE_CONNS", 25),
-		},
-		Redis: RedisConfig{
-			Addr:     getenv("REDIS_ADDR", "localhost:6379"),
-			Password: getenv("REDIS_PASSWORD", ""),
-			DB:       getenvInt("REDIS_DB", 0),
-		},
-		Kafka: KafkaConfig{
-			Brokers:        strings.Split(getenv("KAFKA_BROKERS", "localhost:9092"), ","),
-			TopicEvents:    getenv("KAFKA_TOPIC_EVENTS", "payment.events"),
-			TopicConfirmed: getenv("KAFKA_TOPIC_CONFIRMED", "payment.confirmed"),
-			TopicDLQ:       getenv("KAFKA_TOPIC_DLQ", "payment.events.dlq"),
-			ConsumerGroup:  getenv("KAFKA_CONSUMER_GROUP", "payment-engine"),
-		},
-		Stripe: StripeConfig{
-			SecretKey:       getenv("STRIPE_SECRET_KEY", ""),
-			PublishableKey:  getenv("STRIPE_PUBLISHABLE_KEY", ""),
-			WebhookSecret:   getenv("STRIPE_WEBHOOK_SECRET", ""),
-			APIVersion:      getenv("STRIPE_API_VERSION", "2024-06-20"),
-			DefaultCurrency: getenv("STRIPE_DEFAULT_CURRENCY", "USD"),
-			Mode:            getenv("STRIPE_MODE", "live"),
-		},
-		Blockchain: BlockchainConfig{
-			RPCWebsocket:          getenv("ETH_RPC_WS", ""),
-			RPCHTTP:               getenv("ETH_RPC_HTTP", ""),
-			ContractAddress:       getenv("ETH_CONTRACT_ADDRESS", ""),
-			ChainID:               int64(getenvInt("ETH_CHAIN_ID", 11155111)),
-			RequiredConfirmations: nonNegUint64(getenvInt("ETH_REQUIRED_CONFIRMATIONS", 12)),
-			StartBlock:            nonNegUint64(getenvInt("ETH_START_BLOCK", 0)),
-		},
-		Security: SecurityConfig{
-			HMACSecret:        mustGetenv("HMAC_SECRET"),
-			HMACTimestampSkew: time.Duration(getenvInt("HMAC_TIMESTAMP_SKEW_SECONDS", 300)) * time.Second,
-		},
+// rawConfig mirrors Config but uses YAML-friendly field types (string for
+// durations, int for sizes that we later clamp). It exists so the public
+// Config keeps native Go types (time.Duration, uint8) while the YAML file
+// stays human-readable ("5m", "24h").
+type rawConfig struct {
+	App        rawAppConfig        `yaml:"app"`
+	DB         rawDBConfig         `yaml:"db"`
+	Redis      rawRedisConfig      `yaml:"redis"`
+	Kafka      rawKafkaConfig      `yaml:"kafka"`
+	Stripe     rawStripeConfig     `yaml:"stripe"`
+	Blockchain rawBlockchainConfig `yaml:"blockchain"`
+	Security   rawSecurityConfig   `yaml:"security"`
+}
+
+type rawAppConfig struct {
+	Env                       string `yaml:"env"`
+	Port                      int    `yaml:"port"`
+	LogLevel                  string `yaml:"log_level"`
+	PublicBaseURL             string `yaml:"public_base_url"`
+	LazyCheckout              bool   `yaml:"lazy_checkout"`
+	CheckoutTokenSecret       string `yaml:"checkout_token_secret"`
+	CheckoutTokenTTL          string `yaml:"checkout_token_ttl"`
+	StripeRateLimit           int    `yaml:"stripe_rate_limit"`
+	CheckoutDefaultSuccessURL string `yaml:"checkout_default_success_url"`
+	CheckoutDefaultCancelURL  string `yaml:"checkout_default_cancel_url"`
+	LogicalShardCount         int    `yaml:"logical_shard_count"`
+}
+
+type rawDBConfig struct {
+	DSN          string             `yaml:"dsn"`
+	MaxOpenConns int                `yaml:"max_open_conns"`
+	MaxIdleConns int                `yaml:"max_idle_conns"`
+	Shards       []rawShardDBConfig `yaml:"shards"`
+}
+
+type rawShardDBConfig struct {
+	DSN          string `yaml:"dsn"`
+	MaxOpenConns int    `yaml:"max_open_conns"`
+	MaxIdleConns int    `yaml:"max_idle_conns"`
+}
+
+type rawRedisConfig struct {
+	Addr     string `yaml:"addr"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
+}
+
+type rawKafkaConfig struct {
+	Brokers        []string `yaml:"brokers"`
+	TopicConfirmed string   `yaml:"topic_confirmed"`
+	TopicDLQ       string   `yaml:"topic_dlq"`
+	ConsumerGroup  string   `yaml:"consumer_group"`
+}
+
+type rawStripeConfig struct {
+	SecretKey       string `yaml:"secret_key"`
+	PublishableKey  string `yaml:"publishable_key"`
+	WebhookSecret   string `yaml:"webhook_secret"`
+	APIVersion      string `yaml:"api_version"`
+	DefaultCurrency string `yaml:"default_currency"`
+	Mode            string `yaml:"mode"`
+}
+
+type rawBlockchainConfig struct {
+	RPCWebsocket          string `yaml:"rpc_websocket"`
+	RPCHTTP               string `yaml:"rpc_http"`
+	ContractAddress       string `yaml:"contract_address"`
+	ChainID               int64  `yaml:"chain_id"`
+	RequiredConfirmations int64  `yaml:"required_confirmations"`
+	StartBlock            int64  `yaml:"start_block"`
+}
+
+type rawSecurityConfig struct {
+	HMACSecret        string `yaml:"hmac_secret"`
+	HMACTimestampSkew string `yaml:"hmac_timestamp_skew"`
+	AdminAPIKey       string `yaml:"admin_api_key"`
+}
+
+// Load reads and parses the YAML config at path. Unknown fields are
+// rejected so typos surface immediately. All defaults applied here match
+// the previous .env-based loader; if the YAML omits a field, the default
+// kicks in.
+func Load(path string) (*Config, error) {
+	if path == "" {
+		return nil, fmt.Errorf("config path is empty")
+	}
+	// path is operator-supplied via the --config flag; reading it is the
+	// whole point of this function.
+	data, err := os.ReadFile(path) // #nosec G304
+	if err != nil {
+		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
 
+	var raw rawConfig
+	dec := yaml.NewDecoder(strings.NewReader(string(data)))
+	dec.KnownFields(true)
+	if err := dec.Decode(&raw); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+
+	cfg, err := raw.toConfig()
+	if err != nil {
+		return nil, fmt.Errorf("config %s: %w", path, err)
+	}
 	if err := validate(cfg); err != nil {
 		return nil, err
 	}
 	return cfg, nil
 }
 
+func (r *rawConfig) toConfig() (*Config, error) {
+	publicBase := strings.TrimRight(stringDefault(r.App.PublicBaseURL, "http://localhost:8080"), "/")
+
+	tokenTTL, err := parseDurationDefault(r.App.CheckoutTokenTTL, 24*time.Hour)
+	if err != nil {
+		return nil, fmt.Errorf("app.checkout_token_ttl: %w", err)
+	}
+	hmacSkew, err := parseDurationDefault(r.Security.HMACTimestampSkew, 5*time.Minute)
+	if err != nil {
+		return nil, fmt.Errorf("security.hmac_timestamp_skew: %w", err)
+	}
+
+	cfg := &Config{
+		App: AppConfig{
+			Env:                       stringDefault(r.App.Env, "development"),
+			Port:                      intDefault(r.App.Port, 8080),
+			LogLevel:                  stringDefault(r.App.LogLevel, "info"),
+			PublicBaseURL:             publicBase,
+			LazyCheckout:              r.App.LazyCheckout,
+			CheckoutTokenSecret:       r.App.CheckoutTokenSecret,
+			CheckoutTokenTTL:          tokenTTL,
+			StripeRateLimit:           intDefault(r.App.StripeRateLimit, 80),
+			CheckoutDefaultSuccessURL: stringDefault(r.App.CheckoutDefaultSuccessURL, publicBase+"/checkout/success"),
+			CheckoutDefaultCancelURL:  stringDefault(r.App.CheckoutDefaultCancelURL, publicBase+"/checkout/cancel"),
+			LogicalShardCount:         shardCount(intDefault(r.App.LogicalShardCount, 16)),
+		},
+		DB: DBConfig{
+			DSN:          r.DB.DSN,
+			MaxOpenConns: intDefault(r.DB.MaxOpenConns, 100),
+			MaxIdleConns: intDefault(r.DB.MaxIdleConns, 25),
+			Shards:       toShardDBConfigs(r.DB.Shards),
+		},
+		Redis: RedisConfig{
+			Addr:     stringDefault(r.Redis.Addr, "localhost:6379"),
+			Password: r.Redis.Password,
+			DB:       r.Redis.DB,
+		},
+		Kafka: KafkaConfig{
+			Brokers:        sliceDefault(r.Kafka.Brokers, []string{"localhost:9092"}),
+			TopicConfirmed: stringDefault(r.Kafka.TopicConfirmed, "payment.confirmed"),
+			TopicDLQ:       stringDefault(r.Kafka.TopicDLQ, "payment.confirmed.dlq"),
+			ConsumerGroup:  stringDefault(r.Kafka.ConsumerGroup, "payment-engine"),
+		},
+		Stripe: StripeConfig{
+			SecretKey:       r.Stripe.SecretKey,
+			PublishableKey:  r.Stripe.PublishableKey,
+			WebhookSecret:   r.Stripe.WebhookSecret,
+			APIVersion:      stringDefault(r.Stripe.APIVersion, "2024-06-20"),
+			DefaultCurrency: stringDefault(r.Stripe.DefaultCurrency, "USD"),
+			Mode:            stringDefault(r.Stripe.Mode, "live"),
+		},
+		Blockchain: BlockchainConfig{
+			RPCWebsocket:          r.Blockchain.RPCWebsocket,
+			RPCHTTP:               r.Blockchain.RPCHTTP,
+			ContractAddress:       r.Blockchain.ContractAddress,
+			ChainID:               int64Default(r.Blockchain.ChainID, 11155111),
+			RequiredConfirmations: nonNegUint64(int64Default(r.Blockchain.RequiredConfirmations, 12)),
+			StartBlock:            nonNegUint64(r.Blockchain.StartBlock),
+		},
+		Security: SecurityConfig{
+			HMACSecret:        r.Security.HMACSecret,
+			HMACTimestampSkew: hmacSkew,
+			AdminAPIKey:       r.Security.AdminAPIKey,
+		},
+	}
+	return cfg, nil
+}
+
 func validate(c *Config) error {
+	if len(c.DB.Shards) == 0 && c.DB.DSN == "" {
+		return fmt.Errorf("db.dsn or db.shards is required")
+	}
+	for i, s := range c.DB.Shards {
+		if s.DSN == "" {
+			return fmt.Errorf("db.shards[%d].dsn is required", i)
+		}
+	}
+	if n := len(c.DB.Shards); n > 0 {
+		L := int(c.App.LogicalShardCount)
+		if L < n {
+			return fmt.Errorf("app.logical_shard_count (%d) must be >= len(db.shards) (%d)", L, n)
+		}
+		if L%n != 0 {
+			return fmt.Errorf("app.logical_shard_count (%d) must be divisible by len(db.shards) (%d)", L, n)
+		}
+	}
 	if c.App.Port <= 0 || c.App.Port > 65535 {
-		return fmt.Errorf("invalid APP_PORT: %d", c.App.Port)
+		return fmt.Errorf("invalid app.port: %d", c.App.Port)
 	}
 	if len(c.Security.HMACSecret) < 16 {
-		return fmt.Errorf("HMAC_SECRET must be at least 16 chars")
+		return fmt.Errorf("security.hmac_secret must be at least 16 chars")
 	}
 	switch c.Stripe.Mode {
 	case "live":
 		if c.Stripe.SecretKey == "" {
-			return fmt.Errorf("STRIPE_SECRET_KEY required when STRIPE_MODE=live")
+			return fmt.Errorf("stripe.secret_key required when stripe.mode=live")
 		}
 		if c.Stripe.WebhookSecret == "" {
-			return fmt.Errorf("STRIPE_WEBHOOK_SECRET required when STRIPE_MODE=live")
+			return fmt.Errorf("stripe.webhook_secret required when stripe.mode=live")
 		}
 	case "fake":
 		// no requirements
 	default:
-		return fmt.Errorf("invalid STRIPE_MODE: %s (allowed: live, fake)", c.Stripe.Mode)
+		return fmt.Errorf("invalid stripe.mode: %s (allowed: live, fake)", c.Stripe.Mode)
 	}
 	return nil
 }
 
-func getenv(key, def string) string {
-	if v, ok := os.LookupEnv(key); ok && v != "" {
-		return v
-	}
-	return def
-}
-
-func mustGetenv(key string) string {
-	v, ok := os.LookupEnv(key)
-	if !ok || v == "" {
-		panic(fmt.Sprintf("required env var %s is not set", key))
+func stringDefault(v, def string) string {
+	if v == "" {
+		return def
 	}
 	return v
 }
 
-func getenvInt(key string, def int) int {
-	v, ok := os.LookupEnv(key)
-	if !ok || v == "" {
+func intDefault(v, def int) int {
+	if v == 0 {
 		return def
 	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return def
-	}
-	return n
+	return v
 }
 
-func nonNegUint64(v int) uint64 {
+func int64Default(v, def int64) int64 {
+	if v == 0 {
+		return def
+	}
+	return v
+}
+
+func sliceDefault(v, def []string) []string {
+	if len(v) == 0 {
+		return def
+	}
+	return v
+}
+
+func toShardDBConfigs(in []rawShardDBConfig) []ShardDBConfig {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ShardDBConfig, len(in))
+	for i, s := range in {
+		// rawShardDBConfig and ShardDBConfig have the same field shape;
+		// the conversion is structural so staticcheck S1016 prefers a
+		// type cast over a struct-literal copy.
+		out[i] = ShardDBConfig(s)
+	}
+	return out
+}
+
+func parseDurationDefault(v string, def time.Duration) (time.Duration, error) {
+	if v == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, err
+	}
+	return d, nil
+}
+
+func nonNegUint64(v int64) uint64 {
 	if v < 0 {
 		return 0
 	}
 	return uint64(v)
 }
 
-func getenvBool(key string, def bool) bool {
-	v, ok := os.LookupEnv(key)
-	if !ok || v == "" {
-		return def
+// shardCount clamps logical_shard_count into the valid uint8 range
+// [1, 255]. The default is applied by the caller.
+func shardCount(v int) uint8 {
+	if v < 1 {
+		return 1
 	}
-	b, err := strconv.ParseBool(v)
-	if err != nil {
-		return def
+	if v > 255 {
+		return 255
 	}
-	return b
+	return uint8(v)
 }

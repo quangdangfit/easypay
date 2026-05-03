@@ -20,10 +20,15 @@ type Webhooks interface {
 // It returns a redirect URL for an order, lazily creating the upstream
 // session on first use.
 type Checkouts interface {
-	Resolve(ctx context.Context, orderID string) (string, error)
+	Resolve(ctx context.Context, merchantID, orderID string) (string, error)
 }
 
 // Reconciler runs as a background loop and recovers stuck orders.
 type Reconciler interface {
 	Run(ctx context.Context) error
+}
+
+// Merchants is the port consumed by the admin merchant handler.
+type Merchants interface {
+	Create(ctx context.Context, in CreateMerchantInput) (*CreateMerchantResult, error)
 }

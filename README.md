@@ -79,19 +79,19 @@ docker compose up -d
 make migrate
 
 # 1. configure
-cp .env.example .env
+cp config.yaml.example config.yaml
 # edit at minimum:
-#   STRIPE_MODE=fake             # for local dev, no real Stripe call
-#   LAZY_CHECKOUT=true           # decouple API throughput from Stripe
-#   HMAC_SECRET=<32+ random>
-#   CHECKOUT_TOKEN_SECRET=<32+ random>
+#   stripe.mode: fake                  # for local dev, no real Stripe call
+#   app.lazy_checkout: true            # decouple API throughput from Stripe
+#   security.hmac_secret: <32+ random>
+#   app.checkout_token_secret: <32+ random>
 
 # 2. seed merchant + smoke test
 ./scripts/curl-test.sh           # creates BENCH_M1 merchant + a payment
 
 # 3. run server
-make run
-# (server reloads .env automatically via godotenv)
+make run                         # passes --config config.yaml
+# or: ./easypay --config config.yaml
 ```
 
 Open `http://localhost:8080/healthz` → `{"status":"alive"}`.
@@ -99,21 +99,22 @@ Open `http://localhost:8080/readyz` → checks DB + Redis + Kafka.
 
 ---
 
-## Configuration (env)
+## Configuration (YAML)
 
-See `.env.example` for the full list. The most consequential ones:
+Server reads a YAML file passed via `--config` (default `./config.yaml`).
+See `config.yaml.example` for the full schema. The most consequential keys:
 
-| Var | Effect |
+| Key | Effect |
 |---|---|
-| `STRIPE_MODE` | `live` (default), `fake` (no network — for bench/dev) |
-| `LAZY_CHECKOUT` | `true` defers Stripe Session creation until user click |
-| `PUBLIC_BASE_URL` | Origin used in self-hosted checkout URLs |
-| `CHECKOUT_TOKEN_SECRET` | Signs `/pay/:id?t=<token>`; empty = dev mode |
-| `CHECKOUT_DEFAULT_SUCCESS_URL` | Fallback when merchant doesn't pass it |
-| `STRIPE_RATE_LIMIT` | Token-bucket cap (rps) for Stripe SDK calls |
-| `HMAC_SECRET` | Merchant request signing key (≥16 chars) |
-| `KAFKA_BROKERS` | `host:port,host:port` |
-| `DB_DSN` | `user:pass@tcp(host:port)/db?parseTime=true&loc=UTC` |
+| `stripe.mode` | `live` (default), `fake` (no network — for bench/dev) |
+| `app.lazy_checkout` | `true` defers Stripe Session creation until user click |
+| `app.public_base_url` | Origin used in self-hosted checkout URLs |
+| `app.checkout_token_secret` | Signs `/pay/:id?t=<token>`; empty = dev mode |
+| `app.checkout_default_success_url` | Fallback when merchant doesn't pass it |
+| `app.stripe_rate_limit` | Token-bucket cap (rps) for Stripe SDK calls |
+| `security.hmac_secret` | Merchant request signing key (≥16 chars) |
+| `kafka.brokers` | YAML list of `host:port` |
+| `db.dsn` | `user:pass@tcp(host:port)/db?parseTime=true&loc=UTC` |
 
 ---
 

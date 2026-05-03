@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+
+	"github.com/quangdangfit/easypay/internal/repository"
 )
 
 func newDB(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
@@ -21,7 +23,7 @@ func newDB(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 
 func TestCursor_GetExisting(t *testing.T) {
 	db, mock := newDB(t)
-	c := NewMySQLCursor(db)
+	c := NewMySQLCursor(repository.NewSingleShardRouter(db, 16))
 	mock.ExpectQuery("SELECT last_block FROM block_cursors").
 		WithArgs(int64(1)).
 		WillReturnRows(sqlmock.NewRows([]string{"last_block"}).AddRow(uint64(42)))
@@ -37,7 +39,7 @@ func TestCursor_GetExisting(t *testing.T) {
 
 func TestCursor_GetMissing(t *testing.T) {
 	db, mock := newDB(t)
-	c := NewMySQLCursor(db)
+	c := NewMySQLCursor(repository.NewSingleShardRouter(db, 16))
 	mock.ExpectQuery("SELECT last_block FROM block_cursors").
 		WillReturnError(sql.ErrNoRows)
 	v, err := c.Get(context.Background(), 1)
@@ -48,7 +50,7 @@ func TestCursor_GetMissing(t *testing.T) {
 
 func TestCursor_GetError(t *testing.T) {
 	db, mock := newDB(t)
-	c := NewMySQLCursor(db)
+	c := NewMySQLCursor(repository.NewSingleShardRouter(db, 16))
 	mock.ExpectQuery("SELECT").WillReturnError(errors.New("boom"))
 	if _, err := c.Get(context.Background(), 1); err == nil {
 		t.Fatal("expected error")
@@ -57,7 +59,7 @@ func TestCursor_GetError(t *testing.T) {
 
 func TestCursor_Set(t *testing.T) {
 	db, mock := newDB(t)
-	c := NewMySQLCursor(db)
+	c := NewMySQLCursor(repository.NewSingleShardRouter(db, 16))
 	mock.ExpectExec("INSERT INTO block_cursors").
 		WithArgs(int64(1), uint64(99)).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -68,7 +70,7 @@ func TestCursor_Set(t *testing.T) {
 
 func TestCursor_SetError(t *testing.T) {
 	db, mock := newDB(t)
-	c := NewMySQLCursor(db)
+	c := NewMySQLCursor(repository.NewSingleShardRouter(db, 16))
 	mock.ExpectExec("INSERT INTO block_cursors").
 		WillReturnError(errors.New("conn"))
 	if err := c.Set(context.Background(), 1, 99); err == nil {

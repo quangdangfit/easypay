@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/joho/godotenv"
 
 	"github.com/ethereum/go-ethereum/common"
 
@@ -28,15 +27,6 @@ import (
 	"github.com/quangdangfit/easypay/pkg/logger"
 )
 
-func lookupSecretByMerchantID(ctx context.Context, db *sql.DB, merchantID string) string {
-	var secret string
-	err := db.QueryRowContext(ctx, "SELECT secret_key FROM merchants WHERE merchant_id = ? LIMIT 1", merchantID).Scan(&secret)
-	if err != nil {
-		return ""
-	}
-	return secret
-}
-
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "fatal:", err)
@@ -45,11 +35,10 @@ func main() {
 }
 
 func run() error {
-	// Best-effort load of .env (dev convenience). Real envs use the platform's
-	// secret manager; we don't error if the file is absent.
-	_ = godotenv.Load()
+	configPath := flag.String("config", "config.yaml", "path to YAML config file")
+	flag.Parse()
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(*configPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -58,12 +47,14 @@ func run() error {
 	log := logger.L()
 	log.Info("starting easypay", "env", cfg.App.Env, "port", cfg.App.Port)
 
-	// MySQL.
-	db, err := repository.OpenMySQL(cfg.DB)
+	// MySQL — one pool per physical shard. The router maps a merchant's
+	// logical shard_index → physical pool. With db.shards empty, the router
+	// collapses to a single pool from db.dsn (legacy / dev).
+	router, err := repository.OpenShards(cfg.DB, cfg.App.LogicalShardCount)
 	if err != nil {
-		return fmt.Errorf("mysql: %w", err)
+		return fmt.Errorf("mysql shards: %w", err)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() { _ = router.Close() }()
 
 	// Redis.
 	rc, err := cache.NewRedis(cfg.Redis)
@@ -72,16 +63,16 @@ func run() error {
 	}
 	defer func() { _ = rc.Close() }()
 
-	// Kafka producer.
+	// Kafka producer (only `payment.confirmed` is published from this app
+	// now — the write path commits to MySQL synchronously and does not fan
+	// out via Kafka).
 	publisher := kafka.NewPublisher(cfg.Kafka)
 	defer func() { _ = publisher.Close() }()
 
 	// Repos & cache helpers.
-	orderRepo := repository.NewOrderRepository(db)
-	merchantRepo := repository.NewMerchantRepository(db)
-	idem := cache.NewIdempotency(rc)
+	orderRepo := repository.NewOrderRepository(router)
+	merchantRepo := repository.NewMerchantRepository(router, cfg.App.LogicalShardCount)
 	rl := cache.NewRateLimiter(rc)
-	pendingOrders := cache.NewPendingOrderStore(rc)
 	locker := cache.NewLocker(rc)
 	urlCache := cache.NewURLCache(10000, 5*time.Second)
 	stripeBucket := cache.NewTokenBucket(rc, "stripe:create_session", cfg.App.StripeRateLimit, float64(cfg.App.StripeRateLimit))
@@ -99,7 +90,7 @@ func run() error {
 	stripeClient = stripe.NewBreakerClient(stripeClient, "stripe")
 
 	// Service + handlers.
-	paySvc := service.NewPaymentService(idem, stripeClient, publisher, pendingOrders, service.PaymentServiceOptions{
+	paySvc := service.NewPaymentService(stripeClient, orderRepo, service.PaymentServiceOptions{
 		DefaultCurrency:   cfg.Stripe.DefaultCurrency,
 		CryptoContract:    cfg.Blockchain.ContractAddress,
 		CryptoChainID:     cfg.Blockchain.ChainID,
@@ -110,11 +101,12 @@ func run() error {
 		DefaultSuccessURL: cfg.App.CheckoutDefaultSuccessURL,
 		DefaultCancelURL:  cfg.App.CheckoutDefaultCancelURL,
 	})
-	webhookSvc := service.NewWebhookService(stripeClient, orderRepo, publisher, rc, cfg.Stripe.WebhookSecret)
+	merchantSvc := service.NewMerchantService(merchantRepo)
+	webhookSvc := service.NewWebhookService(stripeClient, orderRepo, merchantRepo, publisher, rc, cfg.Stripe.WebhookSecret)
 	checkoutResolver := service.NewCheckoutResolver(service.CheckoutResolverOptions{
 		Stripe:            stripeClient,
 		Repo:              orderRepo,
-		Pending:           pendingOrders,
+		Merchants:         merchantRepo,
 		Locker:            locker,
 		URLCache:          urlCache,
 		Bucket:            stripeBucket,
@@ -126,9 +118,10 @@ func run() error {
 	refundH := handler.NewRefundHandler(webhookSvc)
 	webhookH := handler.NewWebhookHandler(webhookSvc)
 	checkoutH := handler.NewCheckoutHandler(checkoutResolver, cfg.App.CheckoutTokenSecret)
+	merchantH := handler.NewMerchantHandler(merchantSvc)
 
 	healthH := handler.NewHealthHandler(
-		&repository.MySQLPinger{DB: db},
+		&repository.ShardRouterPinger{Router: router},
 		&cache.RedisPinger{Client: rc},
 		kafka.NewPinger(cfg.Kafka),
 	)
@@ -140,39 +133,35 @@ func run() error {
 		Refund:        refundH,
 		Webhook:       webhookH,
 		Checkout:      checkoutH,
+		Merchant:      merchantH,
 		Merchants:     merchantRepo,
 		RateLimiter:   rl,
 		HMACSkew:      cfg.Security.HMACTimestampSkew,
+		AdminAPIKey:   cfg.Security.AdminAPIKey,
 	})
 
-	// Async batch consumer for payment.events → MySQL.
+	// Settlement consumer for payment.confirmed → merchant callback.
+	// Looks up callback URL + signing secret per event so merchants can
+	// rotate either without bouncing the gateway.
 	consumerCtx, consumerCancel := context.WithCancel(context.Background())
 	defer consumerCancel()
-	paymentConsumer := consumer.NewPaymentConsumer(orderRepo).NewBatch(cfg.Kafka)
-	go func() {
-		if err := paymentConsumer.Run(consumerCtx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("payment consumer exited", "err", err)
-		}
-	}()
-
-	// Settlement consumer for payment.confirmed → merchant callback.
-	merchantSecretLookup := func(merchantID string) string {
-		// Best-effort sync lookup — settlement runs async so a 1s timeout is fine.
+	merchantLookup := func(merchantID string) consumer.MerchantCallback {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		// Repository is keyed by api_key not merchant_id; we'd ideally have
-		// a GetByMerchantID. For now we tolerate a small extra query.
-		// TODO(safety-nets phase): introduce proper GetByMerchantID.
-		return lookupSecretByMerchantID(ctx, db, merchantID)
+		m, err := merchantRepo.GetByMerchantID(ctx, merchantID)
+		if err != nil {
+			return consumer.MerchantCallback{}
+		}
+		return consumer.MerchantCallback{URL: m.CallbackURL, Secret: m.SecretKey}
 	}
-	settlementConsumer := consumer.NewSettlementConsumer(merchantSecretLookup).NewBatch(cfg.Kafka)
+	settlementConsumer := consumer.NewSettlementConsumer(merchantLookup).NewBatch(cfg.Kafka)
 	go func() {
 		if err := settlementConsumer.Run(consumerCtx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("settlement consumer exited", "err", err)
 		}
 	}()
 
-	// Order reconciliation cron (Phase 6).
+	// Order reconciliation cron.
 	orderReconciler := service.NewOrderReconciliation(orderRepo, stripeClient, publisher)
 	go func() {
 		if err := orderReconciler.Run(consumerCtx); err != nil && !errors.Is(err, context.Canceled) {
@@ -180,7 +169,7 @@ func run() error {
 		}
 	}()
 
-	// Blockchain listener (Phase 5). Only spin up if a contract address is configured.
+	// Blockchain listener. Only spin up if a contract address is configured.
 	if cfg.Blockchain.ContractAddress != "" && cfg.Blockchain.RPCWebsocket != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		chainClient, err := blockchain.NewClient(ctx, cfg.Blockchain.RPCWebsocket, cfg.Blockchain.RPCHTTP)
@@ -188,15 +177,15 @@ func run() error {
 		if err != nil {
 			log.Warn("blockchain client unavailable, listener disabled", "err", err)
 		} else {
-			pendingTxRepo := repository.NewPendingTxRepository(db)
-			cursor := blockchain.NewMySQLCursor(db)
+			onchainTxRepo := repository.NewOnchainTxRepository(router)
+			cursor := blockchain.NewMySQLCursor(router)
 			chainCfg := blockchain.ChainConfig{
 				ChainID:               cfg.Blockchain.ChainID,
 				ContractAddress:       common.HexToAddress(cfg.Blockchain.ContractAddress),
 				RequiredConfirmations: cfg.Blockchain.RequiredConfirmations,
 				StartBlock:            cfg.Blockchain.StartBlock,
 			}
-			listener := blockchain.NewListener(chainClient, chainCfg, cursor, pendingTxRepo, orderRepo, publisher)
+			listener := blockchain.NewListener(chainClient, chainCfg, cursor, onchainTxRepo, orderRepo, publisher)
 			go listener.Run(consumerCtx)
 		}
 	}

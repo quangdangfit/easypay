@@ -40,8 +40,8 @@ go test -race -count=1 -timeout 120s ./internal/... ./pkg/...
 
 ## When to skip
 
-- **Docs-only changes** (`*.md`, comments, `.env.example`): both gates can
-  be skipped. State this explicitly in the response.
+- **Docs-only changes** (`*.md`, comments, `config.yaml.example`): both gates
+  can be skipped. State this explicitly in the response.
 - **Migration files** (`migrations/*.sql`): skip lint, but still run unit
   tests if any Go code touches them (e.g. a repo refactor).
 - **Generated files** (vendored deps, mocks): the gate may already be

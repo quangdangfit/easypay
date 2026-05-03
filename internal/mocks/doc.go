@@ -7,11 +7,9 @@ package mocks
 
 //go:generate mockgen -source=../repository/order_repo.go -destination=repo/mock_order_repo.go -package=repomock
 //go:generate mockgen -source=../repository/merchant_repo.go -destination=repo/mock_merchant_repo.go -package=repomock
-//go:generate mockgen -source=../repository/pending_tx_repo.go -destination=repo/mock_pending_tx_repo.go -package=repomock
+//go:generate mockgen -source=../repository/onchain_tx_repo.go -destination=repo/mock_onchain_tx_repo.go -package=repomock
 
-//go:generate mockgen -source=../cache/idempotency.go -destination=cache/mock_idempotency.go -package=cachemock
 //go:generate mockgen -source=../cache/lock.go -destination=cache/mock_lock.go -package=cachemock
-//go:generate mockgen -source=../cache/order_pending.go -destination=cache/mock_pending_order.go -package=cachemock
 //go:generate mockgen -source=../cache/ratelimiter.go -destination=cache/mock_ratelimiter.go -package=cachemock
 //go:generate mockgen -source=../cache/token_bucket.go -destination=cache/mock_token_bucket.go -package=cachemock
 //go:generate mockgen -source=../cache/url_cache.go -destination=cache/mock_url_cache.go -package=cachemock

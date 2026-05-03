@@ -11,11 +11,10 @@ import (
 	"github.com/quangdangfit/easypay/internal/config"
 )
 
-func TestPaymentEventEncoding(t *testing.T) {
-	e := PaymentEvent{
-		OrderID: "ord-1", MerchantID: "M1", TransactionID: "TXN-1",
-		Amount: 1500, Currency: "USD", PaymentMethod: "card",
-		Status: "pending", CreatedAt: 1,
+func TestPaymentConfirmedEventEncoding(t *testing.T) {
+	e := PaymentConfirmedEvent{
+		OrderID: "ord-1", MerchantID: "M1", Status: "paid",
+		Amount: 1500, Currency: "USD", ConfirmedAt: 1,
 	}
 	if e.OrderID == "" {
 		t.Fatal("smoke")
@@ -53,7 +52,6 @@ func TestPublisher_Close(t *testing.T) {
 	// permits this — its Close just flushes buffers).
 	p := NewPublisher(config.KafkaConfig{
 		Brokers:        []string{"127.0.0.1:1"},
-		TopicEvents:    "t1",
 		TopicConfirmed: "t2",
 		TopicDLQ:       "t3",
 	})
@@ -62,10 +60,9 @@ func TestPublisher_Close(t *testing.T) {
 	}
 }
 
-func TestPublishPaymentEvent_NoBrokerErrors(t *testing.T) {
+func TestPublishPaymentConfirmed_NoBrokerErrors(t *testing.T) {
 	p := NewPublisher(config.KafkaConfig{
 		Brokers:        []string{"127.0.0.1:1"},
-		TopicEvents:    "t1",
 		TopicConfirmed: "t2",
 		TopicDLQ:       "t3",
 	})
@@ -74,7 +71,6 @@ func TestPublishPaymentEvent_NoBrokerErrors(t *testing.T) {
 	defer cancel()
 	// Without a broker, this should error (timeout / connection refused).
 	// We just want to exercise the marshalling + WriteMessages code path.
-	_ = p.PublishPaymentEvent(ctx, PaymentEvent{OrderID: "ord-1", MerchantID: "M1"})
 	_ = p.PublishPaymentConfirmed(ctx, PaymentConfirmedEvent{OrderID: "ord-1"})
 }
 

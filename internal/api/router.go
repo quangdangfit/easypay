@@ -18,9 +18,13 @@ type Deps struct {
 	Refund        *handler.RefundHandler
 	Webhook       *handler.WebhookHandler
 	Checkout      *handler.CheckoutHandler
+	Merchant      *handler.MerchantHandler
 	Merchants     repository.MerchantRepository
 	RateLimiter   cache.RateLimiter
 	HMACSkew      time.Duration
+	// AdminAPIKey gates the /admin/* group. When empty, admin routes are
+	// not mounted at all.
+	AdminAPIKey string
 }
 
 func NewRouter(deps Deps) *fiber.App {
@@ -48,7 +52,7 @@ func NewRouter(deps Deps) *fiber.App {
 	// Public hosted checkout (lazy-create + redirect to Stripe) and the
 	// post-checkout success/cancel pages Stripe redirects users to.
 	if deps.Checkout != nil {
-		app.Get("/pay/:id", deps.Checkout.Redirect)
+		app.Get("/pay/:merchant_id/:order_id", deps.Checkout.Redirect)
 		app.Get("/checkout/success", deps.Checkout.Success)
 		app.Get("/checkout/cancel", deps.Checkout.Cancel)
 	}
@@ -69,6 +73,13 @@ func NewRouter(deps Deps) *fiber.App {
 	}
 	if deps.Refund != nil {
 		merchantAPI.Post("/payments/:id/refund", deps.Refund.Create)
+	}
+
+	// Admin API (X-Admin-Key). Mounted only when an admin key is configured;
+	// production deployments must set ADMIN_API_KEY to enable.
+	if deps.AdminAPIKey != "" && deps.Merchant != nil {
+		admin := app.Group("/admin", middleware.AdminAuth(deps.AdminAPIKey))
+		admin.Post("/merchants", deps.Merchant.Create)
 	}
 
 	return app

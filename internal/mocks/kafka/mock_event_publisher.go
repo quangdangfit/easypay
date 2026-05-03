@@ -68,17 +68,3 @@ func (mr *MockEventPublisherMockRecorder) PublishPaymentConfirmed(ctx, event any
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PublishPaymentConfirmed", reflect.TypeOf((*MockEventPublisher)(nil).PublishPaymentConfirmed), ctx, event)
 }
-
-// PublishPaymentEvent mocks base method.
-func (m *MockEventPublisher) PublishPaymentEvent(ctx context.Context, event kafka.PaymentEvent) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PublishPaymentEvent", ctx, event)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// PublishPaymentEvent indicates an expected call of PublishPaymentEvent.
-func (mr *MockEventPublisherMockRecorder) PublishPaymentEvent(ctx, event any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PublishPaymentEvent", reflect.TypeOf((*MockEventPublisher)(nil).PublishPaymentEvent), ctx, event)
-}

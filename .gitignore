@@ -24,8 +24,11 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
-.env
+# Local config (contains DB DSN, Stripe keys, HMAC secret).
+# Use config.yaml.example as the template.
+config.yaml
+config.*.yaml
+!config.yaml.example
 
 # Editor/IDE
 .idea/*

@@ -23,7 +23,7 @@ func NewCheckoutHandler(r service.Checkouts, tokenSecret string) *CheckoutHandle
 	return &CheckoutHandler{resolver: r, tokenSecret: tokenSecret}
 }
 
-// Redirect handles GET /pay/:id?t=<token>.
+// Redirect handles GET /pay/:merchant_id/:order_id?t=<token>.
 //
 // Outcomes:
 //   - happy path → 302 → Stripe checkout (sub-100ms p99)
@@ -31,8 +31,9 @@ func NewCheckoutHandler(r service.Checkouts, tokenSecret string) *CheckoutHandle
 //   - circuit open / rate limited → 503 + branded "try again" HTML
 //   - bad/expired token → 410 Gone with branded HTML
 func (h *CheckoutHandler) Redirect(c *fiber.Ctx) error {
-	orderID := c.Params("id")
-	if orderID == "" {
+	merchantID := c.Params("merchant_id")
+	orderID := c.Params("order_id")
+	if merchantID == "" || orderID == "" {
 		return h.sendInvalid(c)
 	}
 
@@ -41,15 +42,16 @@ func (h *CheckoutHandler) Redirect(c *fiber.Ctx) error {
 		if token == "" {
 			return h.sendInvalid(c)
 		}
-		if err := checkouttoken.Verify(h.tokenSecret, orderID, token); err != nil {
-			logger.With(c.UserContext()).Info("checkout token rejected", "order_id", orderID, "err", err)
+		if err := checkouttoken.Verify(h.tokenSecret, merchantID, orderID, token); err != nil {
+			logger.With(c.UserContext()).Info("checkout token rejected",
+				"merchant_id", merchantID, "order_id", orderID, "err", err)
 			return h.sendInvalid(c)
 		}
 	}
 
-	url, err := h.resolver.Resolve(c.UserContext(), orderID)
+	url, err := h.resolver.Resolve(c.UserContext(), merchantID, orderID)
 	if err != nil {
-		log := logger.With(c.UserContext()).With("order_id", orderID, "err", err.Error())
+		log := logger.With(c.UserContext()).With("merchant_id", merchantID, "order_id", orderID, "err", err.Error())
 		switch {
 		case errors.Is(err, service.ErrOrderNotReady):
 			log.Info("checkout resolve: order not ready")

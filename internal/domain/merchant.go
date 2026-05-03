@@ -18,5 +18,11 @@ type Merchant struct {
 	CallbackURL string
 	RateLimit   int
 	Status      MerchantStatus
-	CreatedAt   time.Time
+	// ShardIndex is the merchant's logical shard, in [0, LogicalShardCount).
+	// Picked at create time by least-loaded selection. Today every shard
+	// lives on the same physical `transactions` table; future deployments
+	// can use this column to route a merchant to a specific physical
+	// location without changing application code.
+	ShardIndex uint8
+	CreatedAt  time.Time
 }

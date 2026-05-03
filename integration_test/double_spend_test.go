@@ -23,43 +23,37 @@ import (
 // concurrent requests for the same order from two angles:
 //
 //  1. SAME event.id replayed by N workers — Redis SETNX must serialize them
-//     so exactly one wins; the others see ErrWebhookDuplicate. This protects
-//     against Stripe retrying a delivery before we've ACKed.
+//     so exactly one wins; the others see ErrWebhookDuplicate.
 //
 //  2. DIFFERENT event.ids targeting the same order — all should succeed and
-//     converge on a single 'paid' state. This protects against in-order
-//     duplicate webhooks (e.g. payment_intent.succeeded + checkout.session.completed
-//     for the same payment) racing each other.
+//     converge on a single 'paid' state.
 func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 	env := SetupEnv(t)
 	defer env.Cleanup(t)
 
-	orderRepo := repository.NewOrderRepository(env.DB)
+	orderRepo := repository.NewOrderRepository(env.Router)
+	merchantRepo := repository.NewMerchantRepository(env.Router, 16)
 	mock := NewMockStripe()
 
 	kafkaCfg := config.KafkaConfig{
 		Brokers:        env.KafkaBrokers,
-		TopicEvents:    "payment.events.ds",
 		TopicConfirmed: "payment.confirmed.ds",
-		TopicDLQ:       "payment.events.dlq.ds",
+		TopicDLQ:       "payment.confirmed.dlq.ds",
 		ConsumerGroup:  "ds-group",
 	}
 	publisher := kafka.NewPublisher(kafkaCfg)
-	defer publisher.Close()
+	defer func() { _ = publisher.Close() }()
 
-	svc := service.NewWebhookService(mock, orderRepo, publisher, env.Redis, webhookSecret)
+	svc := service.NewWebhookService(mock, orderRepo, merchantRepo, publisher, env.Redis, webhookSecret)
+	const merchantID = "M_WB"
+	SeedMerchant(t, env.DB, merchantID, "ms-secret", "")
 
 	t.Run("same event.id replayed concurrently", func(t *testing.T) {
-		seed := &domain.Order{
-			OrderID: "ord-ds-1", MerchantID: "M_WB", TransactionID: "TXN-DS-1",
-			Amount: 1500, Currency: "USD", Status: domain.OrderStatusPending,
-			StripePaymentIntentID: "pi_ds_1",
-		}
-		if err := orderRepo.Create(context.Background(), seed); err != nil {
-			t.Fatalf("seed: %v", err)
-		}
+		seed := SeedOrder(t, orderRepo, merchantID, "DS-1", 1500, domain.OrderStatusPending, func(o *domain.Order) {
+			o.StripePaymentIntentID = "pi_ds_1"
+		})
 
-		payload := mustEvent(t, "evt_ds_same", "pi_ds_1", "ord-ds-1", "payment_intent.succeeded")
+		payload := mustEvent(t, "evt_ds_same", "pi_ds_1", seed.OrderID, "payment_intent.succeeded")
 		sig := stripe.SignPayload(payload, webhookSecret, time.Now().Unix())
 
 		const workers = 10
@@ -94,21 +88,16 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 			t.Errorf("expected %d duplicates, got %d", workers-1, dupes.Load())
 		}
 
-		o, _ := orderRepo.GetByOrderID(context.Background(), seed.OrderID)
+		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), 0, seed.MerchantID, seed.OrderID)
 		if o.Status != domain.OrderStatusPaid {
 			t.Errorf("status: got %s want paid", o.Status)
 		}
 	})
 
 	t.Run("different event.ids targeting same order converge to paid", func(t *testing.T) {
-		seed := &domain.Order{
-			OrderID: "ord-ds-2", MerchantID: "M_WB", TransactionID: "TXN-DS-2",
-			Amount: 1500, Currency: "USD", Status: domain.OrderStatusPending,
-			StripePaymentIntentID: "pi_ds_2",
-		}
-		if err := orderRepo.Create(context.Background(), seed); err != nil {
-			t.Fatalf("seed: %v", err)
-		}
+		seed := SeedOrder(t, orderRepo, merchantID, "DS-2", 1500, domain.OrderStatusPending, func(o *domain.Order) {
+			o.StripePaymentIntentID = "pi_ds_2"
+		})
 
 		const workers = 8
 		var ok, fail atomic.Int64
@@ -120,7 +109,7 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				payload := mustEventWithID(t, i, "pi_ds_2", "ord-ds-2")
+				payload := mustEventWithID(t, i, "pi_ds_2", seed.OrderID)
 				sig := stripe.SignPayload(payload, webhookSecret, time.Now().Unix())
 				if err := svc.Process(context.Background(), payload, sig); err != nil {
 					fail.Add(1)
@@ -137,7 +126,7 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 			t.Fatalf("expected all %d to succeed, got ok=%d fail=%d", workers, ok.Load(), fail.Load())
 		}
 
-		o, _ := orderRepo.GetByOrderID(context.Background(), seed.OrderID)
+		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), 0, seed.MerchantID, seed.OrderID)
 		if o.Status != domain.OrderStatusPaid {
 			t.Fatalf("status: got %s want paid", o.Status)
 		}

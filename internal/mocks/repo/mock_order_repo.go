@@ -42,47 +42,34 @@ func (m *MockOrderRepository) EXPECT() *MockOrderRepositoryMockRecorder {
 	return m.recorder
 }
 
-// BatchCreate mocks base method.
-func (m *MockOrderRepository) BatchCreate(ctx context.Context, orders []*domain.Order) error {
+// GetByMerchantOrderID mocks base method.
+func (m *MockOrderRepository) GetByMerchantOrderID(ctx context.Context, shardIdx uint8, merchantID, orderID string) (*domain.Order, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "BatchCreate", ctx, orders)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// BatchCreate indicates an expected call of BatchCreate.
-func (mr *MockOrderRepositoryMockRecorder) BatchCreate(ctx, orders any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BatchCreate", reflect.TypeOf((*MockOrderRepository)(nil).BatchCreate), ctx, orders)
-}
-
-// Create mocks base method.
-func (m *MockOrderRepository) Create(ctx context.Context, order *domain.Order) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Create", ctx, order)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Create indicates an expected call of Create.
-func (mr *MockOrderRepositoryMockRecorder) Create(ctx, order any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockOrderRepository)(nil).Create), ctx, order)
-}
-
-// GetByOrderID mocks base method.
-func (m *MockOrderRepository) GetByOrderID(ctx context.Context, orderID string) (*domain.Order, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetByOrderID", ctx, orderID)
+	ret := m.ctrl.Call(m, "GetByMerchantOrderID", ctx, shardIdx, merchantID, orderID)
 	ret0, _ := ret[0].(*domain.Order)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetByOrderID indicates an expected call of GetByOrderID.
-func (mr *MockOrderRepositoryMockRecorder) GetByOrderID(ctx, orderID any) *gomock.Call {
+// GetByMerchantOrderID indicates an expected call of GetByMerchantOrderID.
+func (mr *MockOrderRepositoryMockRecorder) GetByMerchantOrderID(ctx, shardIdx, merchantID, orderID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByOrderID", reflect.TypeOf((*MockOrderRepository)(nil).GetByOrderID), ctx, orderID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByMerchantOrderID", reflect.TypeOf((*MockOrderRepository)(nil).GetByMerchantOrderID), ctx, shardIdx, merchantID, orderID)
+}
+
+// GetByOrderIDAny mocks base method.
+func (m *MockOrderRepository) GetByOrderIDAny(ctx context.Context, orderID string) (*domain.Order, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetByOrderIDAny", ctx, orderID)
+	ret0, _ := ret[0].(*domain.Order)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetByOrderIDAny indicates an expected call of GetByOrderIDAny.
+func (mr *MockOrderRepositoryMockRecorder) GetByOrderIDAny(ctx, orderID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByOrderIDAny", reflect.TypeOf((*MockOrderRepository)(nil).GetByOrderIDAny), ctx, orderID)
 }
 
 // GetByPaymentIntentID mocks base method.
@@ -100,6 +87,21 @@ func (mr *MockOrderRepositoryMockRecorder) GetByPaymentIntentID(ctx, pi any) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByPaymentIntentID", reflect.TypeOf((*MockOrderRepository)(nil).GetByPaymentIntentID), ctx, pi)
 }
 
+// GetByTransactionID mocks base method.
+func (m *MockOrderRepository) GetByTransactionID(ctx context.Context, shardIdx uint8, merchantID, transactionID string) (*domain.Order, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetByTransactionID", ctx, shardIdx, merchantID, transactionID)
+	ret0, _ := ret[0].(*domain.Order)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetByTransactionID indicates an expected call of GetByTransactionID.
+func (mr *MockOrderRepositoryMockRecorder) GetByTransactionID(ctx, shardIdx, merchantID, transactionID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByTransactionID", reflect.TypeOf((*MockOrderRepository)(nil).GetByTransactionID), ctx, shardIdx, merchantID, transactionID)
+}
+
 // GetPendingBefore mocks base method.
 func (m *MockOrderRepository) GetPendingBefore(ctx context.Context, before time.Time, limit int) ([]*domain.Order, error) {
 	m.ctrl.T.Helper()
@@ -115,32 +117,46 @@ func (mr *MockOrderRepositoryMockRecorder) GetPendingBefore(ctx, before, limit a
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPendingBefore", reflect.TypeOf((*MockOrderRepository)(nil).GetPendingBefore), ctx, before, limit)
 }
 
-// UpdateCheckout mocks base method.
-func (m *MockOrderRepository) UpdateCheckout(ctx context.Context, orderID, stripeSessionID, stripePaymentIntentID, checkoutURL string) error {
+// Insert mocks base method.
+func (m *MockOrderRepository) Insert(ctx context.Context, o *domain.Order) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateCheckout", ctx, orderID, stripeSessionID, stripePaymentIntentID, checkoutURL)
+	ret := m.ctrl.Call(m, "Insert", ctx, o)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Insert indicates an expected call of Insert.
+func (mr *MockOrderRepositoryMockRecorder) Insert(ctx, o any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Insert", reflect.TypeOf((*MockOrderRepository)(nil).Insert), ctx, o)
+}
+
+// UpdateCheckout mocks base method.
+func (m *MockOrderRepository) UpdateCheckout(ctx context.Context, shardIdx uint8, merchantID, orderID, stripeSessionID, stripePaymentIntentID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateCheckout", ctx, shardIdx, merchantID, orderID, stripeSessionID, stripePaymentIntentID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateCheckout indicates an expected call of UpdateCheckout.
-func (mr *MockOrderRepositoryMockRecorder) UpdateCheckout(ctx, orderID, stripeSessionID, stripePaymentIntentID, checkoutURL any) *gomock.Call {
+func (mr *MockOrderRepositoryMockRecorder) UpdateCheckout(ctx, shardIdx, merchantID, orderID, stripeSessionID, stripePaymentIntentID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateCheckout", reflect.TypeOf((*MockOrderRepository)(nil).UpdateCheckout), ctx, orderID, stripeSessionID, stripePaymentIntentID, checkoutURL)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateCheckout", reflect.TypeOf((*MockOrderRepository)(nil).UpdateCheckout), ctx, shardIdx, merchantID, orderID, stripeSessionID, stripePaymentIntentID)
 }
 
 // UpdateStatus mocks base method.
-func (m *MockOrderRepository) UpdateStatus(ctx context.Context, orderID string, status domain.OrderStatus, stripePaymentIntentID string) error {
+func (m *MockOrderRepository) UpdateStatus(ctx context.Context, shardIdx uint8, merchantID, orderID string, status domain.OrderStatus, stripePaymentIntentID string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateStatus", ctx, orderID, status, stripePaymentIntentID)
+	ret := m.ctrl.Call(m, "UpdateStatus", ctx, shardIdx, merchantID, orderID, status, stripePaymentIntentID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateStatus indicates an expected call of UpdateStatus.
-func (mr *MockOrderRepositoryMockRecorder) UpdateStatus(ctx, orderID, status, stripePaymentIntentID any) *gomock.Call {
+func (mr *MockOrderRepositoryMockRecorder) UpdateStatus(ctx, shardIdx, merchantID, orderID, status, stripePaymentIntentID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateStatus", reflect.TypeOf((*MockOrderRepository)(nil).UpdateStatus), ctx, orderID, status, stripePaymentIntentID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateStatus", reflect.TypeOf((*MockOrderRepository)(nil).UpdateStatus), ctx, shardIdx, merchantID, orderID, status, stripePaymentIntentID)
 }
 
 // Mockscanner is a mock of scanner interface.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"regexp"
 	"testing"
 	"time"
 
@@ -23,114 +22,155 @@ func newMockDB(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 	return db, mock
 }
 
-func TestOrderRepo_Create(t *testing.T) {
+const (
+	testMerchant = "M1"
+	testTxnHex   = "0123456789abcdef0123456789abcdef"
+	testOrderID  = "order-1"
+)
+
+func orderRow() *sqlmock.Rows {
+	now := time.Now().Unix()
+	merch := []byte(testMerchant)
+	txn, _ := decodeHex16(testTxnHex)
+	return sqlmock.NewRows([]string{
+		"merchant_id", "transaction_id", "order_id", "amount", "currency_code",
+		"status", "payment_method", "stripe_pi_id", "stripe_session", "created_at", "updated_at",
+	}).AddRow(
+		merch, txn, testOrderID, uint64(1500), uint16(840),
+		uint8(2), uint8(0), []byte("pi_x"), []byte("cs_x"), uint32(now), uint32(now),
+	)
+}
+
+func TestOrderRepo_Insert(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
-	mock.ExpectExec("INSERT INTO orders").
-		WithArgs("ord-1", "M1", "TXN-1", int64(1500), "USD", "pending",
-			nil, nil, nil, nil, nil, nil).
-		WillReturnResult(sqlmock.NewResult(7, 1))
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
+	mock.ExpectExec("INSERT INTO transactions").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	o := &domain.Order{
-		OrderID: "ord-1", MerchantID: "M1", TransactionID: "TXN-1",
-		Amount: 1500, Currency: "USD", Status: domain.OrderStatusPending,
+		MerchantID:    testMerchant,
+		TransactionID: testTxnHex,
+		OrderID:       testOrderID,
+		Amount:        1500,
+		Currency:      "USD",
+		Status:        domain.OrderStatusPending,
+		PaymentMethod: "card",
 	}
-	if err := repo.Create(context.Background(), o); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	if o.ID != 7 {
-		t.Fatalf("id: %d", o.ID)
+	if err := repo.Insert(context.Background(), o); err != nil {
+		t.Fatalf("insert: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestOrderRepo_Create_Error(t *testing.T) {
+func TestOrderRepo_Insert_Duplicate(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
-	mock.ExpectExec("INSERT INTO orders").WillReturnError(errors.New("dup"))
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
+	mock.ExpectExec("INSERT INTO transactions").
+		WillReturnError(errors.New("Error 1062: Duplicate entry"))
 
-	if err := repo.Create(context.Background(), &domain.Order{}); err == nil {
-		t.Fatal("expected error")
+	err := repo.Insert(context.Background(), &domain.Order{
+		MerchantID: testMerchant, TransactionID: testTxnHex, OrderID: testOrderID,
+		Amount: 1, Currency: "USD", Status: domain.OrderStatusCreated, PaymentMethod: "card",
+	})
+	if !errors.Is(err, ErrDuplicateOrder) {
+		t.Fatalf("want ErrDuplicateOrder, got %v", err)
 	}
 }
 
-func orderRow() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{
-		"id", "order_id", "merchant_id", "transaction_id", "amount",
-		"currency", "status", "payment_method", "stripe_session_id",
-		"stripe_payment_intent_id", "stripe_charge_id", "checkout_url",
-		"callback_url", "created_at", "updated_at",
-	}).AddRow(
-		int64(1), "ord-1", "M1", "TXN-1", int64(1500),
-		"USD", "paid", "card", "cs_x",
-		"pi_x", "ch_x", "https://x",
-		"https://cb", time.Now(), time.Now(),
-	)
+func TestOrderRepo_Insert_BadTxnHex(t *testing.T) {
+	db, _ := newMockDB(t)
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
+	err := repo.Insert(context.Background(), &domain.Order{
+		MerchantID: testMerchant, TransactionID: "tooshort", OrderID: testOrderID,
+		Amount: 1, Currency: "USD", Status: domain.OrderStatusCreated, PaymentMethod: "card",
+	})
+	if err == nil {
+		t.Fatal("expected error for bad txn hex")
+	}
 }
 
-func TestOrderRepo_GetByOrderID(t *testing.T) {
+func TestOrderRepo_Insert_BadOrderID(t *testing.T) {
+	db, _ := newMockDB(t)
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
+	err := repo.Insert(context.Background(), &domain.Order{
+		MerchantID: testMerchant, TransactionID: testTxnHex, OrderID: "has space",
+		Amount: 1, Currency: "USD", Status: domain.OrderStatusCreated, PaymentMethod: "card",
+	})
+	if !errors.Is(err, domain.ErrInvalidOrderID) {
+		t.Fatalf("want ErrInvalidOrderID, got %v", err)
+	}
+}
+
+func TestOrderRepo_GetByTransactionID(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
-	mock.ExpectQuery("SELECT.*FROM orders WHERE order_id").
-		WithArgs("ord-1").
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
+	mock.ExpectQuery("SELECT.*FROM transactions WHERE merchant_id").
 		WillReturnRows(orderRow())
 
-	o, err := repo.GetByOrderID(context.Background(), "ord-1")
+	o, err := repo.GetByTransactionID(context.Background(), 0, testMerchant, testTxnHex)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if o.OrderID != "ord-1" || o.Status != domain.OrderStatusPaid {
+	if o.OrderID != testOrderID || o.Status != domain.OrderStatusPaid || o.Currency != "USD" {
 		t.Fatalf("got: %+v", o)
 	}
 }
 
-func TestOrderRepo_GetByOrderID_NotFound(t *testing.T) {
+func TestOrderRepo_GetByTransactionID_NotFound(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
-	mock.ExpectQuery("SELECT.*FROM orders WHERE order_id").
-		WithArgs("missing").WillReturnError(sql.ErrNoRows)
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
+	mock.ExpectQuery("SELECT.*FROM transactions").
+		WillReturnError(sql.ErrNoRows)
 
-	_, err := repo.GetByOrderID(context.Background(), "missing")
+	_, err := repo.GetByTransactionID(context.Background(), 0, testMerchant, testTxnHex)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }
 
-func TestOrderRepo_GetByPaymentIntentID(t *testing.T) {
+func TestOrderRepo_GetByMerchantOrderID(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
-	mock.ExpectQuery("WHERE stripe_payment_intent_id").
-		WithArgs("pi_x").WillReturnRows(orderRow())
-	o, err := repo.GetByPaymentIntentID(context.Background(), "pi_x")
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
+	mock.ExpectQuery("SELECT.*FROM transactions WHERE merchant_id = . AND order_id").
+		WillReturnRows(orderRow())
+
+	o, err := repo.GetByMerchantOrderID(context.Background(), 0, testMerchant, testOrderID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if o.StripePaymentIntentID != "pi_x" {
+	if o.OrderID != testOrderID {
 		t.Fatalf("got: %+v", o)
+	}
+}
+
+func TestOrderRepo_GetByMerchantOrderID_BadFormat(t *testing.T) {
+	db, _ := newMockDB(t)
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
+	_, err := repo.GetByMerchantOrderID(context.Background(), 0, testMerchant, "has space")
+	if !errors.Is(err, domain.ErrInvalidOrderID) {
+		t.Fatalf("want ErrInvalidOrderID, got %v", err)
 	}
 }
 
 func TestOrderRepo_UpdateStatus(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE orders")).
-		WithArgs("paid", "pi_x", "ord-1").
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
+	mock.ExpectExec("UPDATE transactions").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	if err := repo.UpdateStatus(context.Background(), "ord-1", domain.OrderStatusPaid, "pi_x"); err != nil {
+	if err := repo.UpdateStatus(context.Background(), 0, testMerchant, testOrderID, domain.OrderStatusPaid, "pi_x"); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 }
 
 func TestOrderRepo_UpdateStatus_NotFound(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
-	mock.ExpectExec("UPDATE orders").
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
+	mock.ExpectExec("UPDATE transactions").
 		WillReturnResult(sqlmock.NewResult(0, 0))
-
-	err := repo.UpdateStatus(context.Background(), "absent", domain.OrderStatusPaid, "")
+	err := repo.UpdateStatus(context.Background(), 0, testMerchant, testOrderID, domain.OrderStatusPaid, "")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
@@ -138,93 +178,38 @@ func TestOrderRepo_UpdateStatus_NotFound(t *testing.T) {
 
 func TestOrderRepo_UpdateCheckout(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
-	mock.ExpectExec("UPDATE orders SET").
-		WithArgs("cs_x", "pi_x", "https://x", "ord-1").
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
+	mock.ExpectExec("UPDATE transactions").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	if err := repo.UpdateCheckout(context.Background(), "ord-1", "cs_x", "pi_x", "https://x"); err != nil {
+	if err := repo.UpdateCheckout(context.Background(), 0, testMerchant, testOrderID, "cs_x", "pi_x"); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 }
 
 func TestOrderRepo_UpdateCheckout_NotFound(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
-	mock.ExpectExec("UPDATE orders SET").
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
+	mock.ExpectExec("UPDATE transactions").
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	err := repo.UpdateCheckout(context.Background(), "x", "", "", "")
+	err := repo.UpdateCheckout(context.Background(), 0, testMerchant, testOrderID, "", "")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want not found, got %v", err)
 	}
 }
 
-func TestOrderRepo_BatchCreate_Empty(t *testing.T) {
-	db, _ := newMockDB(t)
-	repo := NewOrderRepository(db)
-	if err := repo.BatchCreate(context.Background(), nil); err != nil {
-		t.Fatalf("empty: %v", err)
+func TestHexLower(t *testing.T) {
+	got := hexLower([]byte{0x00, 0x0f, 0xab, 0xcd})
+	if got != "000fabcd" {
+		t.Fatalf("got %q", got)
 	}
 }
 
-func TestOrderRepo_BatchCreate(t *testing.T) {
-	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
-	mock.ExpectExec("INSERT INTO orders.*VALUES").
-		WillReturnResult(sqlmock.NewResult(0, 2))
-
-	orders := []*domain.Order{
-		{OrderID: "ord-1", MerchantID: "M1", TransactionID: "TXN-1", Amount: 100, Currency: "USD", Status: domain.OrderStatusPending},
-		{OrderID: "ord-2", MerchantID: "M1", TransactionID: "TXN-2", Amount: 200, Currency: "USD", Status: domain.OrderStatusPending},
-	}
-	if err := repo.BatchCreate(context.Background(), orders); err != nil {
-		t.Fatalf("batch: %v", err)
-	}
-}
-
-func TestOrderRepo_BatchCreate_Error(t *testing.T) {
-	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
-	mock.ExpectExec("INSERT INTO orders").WillReturnError(errors.New("dup"))
-	err := repo.BatchCreate(context.Background(), []*domain.Order{
-		{OrderID: "ord-1", MerchantID: "M1", TransactionID: "TXN-1", Amount: 1, Currency: "USD", Status: domain.OrderStatusPending},
-	})
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-func TestOrderRepo_GetPendingBefore(t *testing.T) {
-	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
-	mock.ExpectQuery("FROM orders.*WHERE status IN").
-		WithArgs(sqlmock.AnyArg(), 10).
-		WillReturnRows(orderRow())
-
-	out, err := repo.GetPendingBefore(context.Background(), time.Now(), 10)
-	if err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if len(out) != 1 {
-		t.Fatalf("rows: %d", len(out))
-	}
-}
-
-func TestOrderRepo_GetPendingBefore_QueryError(t *testing.T) {
-	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
-	mock.ExpectQuery("FROM orders").WillReturnError(errors.New("conn"))
-	_, err := repo.GetPendingBefore(context.Background(), time.Now(), 10)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-func TestNullStr(t *testing.T) {
-	if v := nullStr(""); v != nil {
+func TestNullBytes(t *testing.T) {
+	if v := nullBytes(""); v != nil {
 		t.Fatal("empty should be nil")
 	}
-	if v := nullStr("x"); v != "x" {
-		t.Fatalf("got: %v", v)
+	if v := nullBytes("x"); v == nil {
+		t.Fatal("non-empty should not be nil")
 	}
 }

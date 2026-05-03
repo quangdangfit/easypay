@@ -27,7 +27,7 @@ help:
 	@echo "  up / down / logs  - manage docker-compose stack"
 
 run:
-	go run ./cmd/server
+	go run ./cmd/server --config config.yaml
 
 build:
 	@mkdir -p $(BIN_DIR)
