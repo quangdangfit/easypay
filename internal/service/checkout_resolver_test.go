@@ -83,11 +83,11 @@ func TestResolve_LazyOrderTriggersStripeCreate(t *testing.T) {
 	}
 }
 
-func TestResolve_NotReadyWhenRowMissing(t *testing.T) {
+func TestResolve_NotFoundWhenRowMissing(t *testing.T) {
 	r, _ := newResolverWithDeps(t)
 	_, err := r.Resolve(context.Background(), tMerchant, "ord-none")
-	if !errors.Is(err, ErrOrderNotReady) {
-		t.Fatalf("want ErrOrderNotReady, got %v", err)
+	if !errors.Is(err, ErrOrderNotFound) {
+		t.Fatalf("want ErrOrderNotFound, got %v", err)
 	}
 }
 

@@ -27,6 +27,7 @@ func NewCheckoutHandler(r service.Checkouts, tokenSecret string) *CheckoutHandle
 //
 // Outcomes:
 //   - happy path → 302 → Stripe checkout (sub-100ms p99)
+//   - order/merchant doesn't exist → 404 + non-refreshing HTML
 //   - order not yet committed → 503 + auto-refreshing HTML (2s)
 //   - circuit open / rate limited → 503 + branded "try again" HTML
 //   - bad/expired token → 410 Gone with branded HTML
@@ -53,6 +54,9 @@ func (h *CheckoutHandler) Redirect(c *fiber.Ctx) error {
 	if err != nil {
 		log := logger.With(c.UserContext()).With("merchant_id", merchantID, "order_id", orderID, "err", err.Error())
 		switch {
+		case errors.Is(err, service.ErrOrderNotFound):
+			log.Info("checkout resolve: order not found")
+			return h.sendNotFound(c)
 		case errors.Is(err, service.ErrOrderNotReady):
 			log.Info("checkout resolve: order not ready")
 			return h.sendNotReady(c)
@@ -76,6 +80,12 @@ func (h *CheckoutHandler) sendNotReady(c *fiber.Ctx) error {
 	c.Set("Cache-Control", "no-store")
 	c.Set("Retry-After", "2")
 	return c.Status(fiber.StatusServiceUnavailable).SendString(checkoutNotReadyHTML)
+}
+
+func (h *CheckoutHandler) sendNotFound(c *fiber.Ctx) error {
+	c.Set(fiber.HeaderContentType, "text/html; charset=utf-8")
+	c.Set("Cache-Control", "no-store")
+	return c.Status(fiber.StatusNotFound).SendString(checkoutNotFoundHTML)
 }
 
 func (h *CheckoutHandler) sendUnavailable(c *fiber.Ctx) error {
