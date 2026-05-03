@@ -100,6 +100,28 @@ const (
 </body>
 </html>`
 
+	checkoutNotFoundHTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Order not found</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;background:#fafafa;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#1a1a1a}
+  .card{background:#fff;border-radius:12px;padding:32px 40px;box-shadow:0 1px 3px rgba(0,0,0,0.08);text-align:center;max-width:420px}
+  .icon{font-size:36px;margin-bottom:8px}
+  h1{font-size:18px;font-weight:600;margin:0 0 8px}
+  p{font-size:14px;color:#666;margin:0;line-height:1.5}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">🔍</div>
+    <h1>Order not found</h1>
+    <p>We couldn't find this order. The link may be incorrect — please return to the merchant to start a new checkout.</p>
+  </div>
+</body>
+</html>`
+
 	checkoutInvalidHTML = `<!doctype html>
 <html lang="en">
 <head>

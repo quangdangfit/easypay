@@ -56,6 +56,28 @@ func TestCheckout_NotReadyShowsHTML(t *testing.T) {
 	}
 }
 
+func TestCheckout_NotFoundShowsHTML(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	co := svcmock.NewMockCheckouts(ctrl)
+	co.EXPECT().Resolve(gomock.Any(), gomock.Any(), gomock.Any()).Return("", service.ErrOrderNotFound)
+
+	app := fiber.New()
+	app.Get(payRoute, NewCheckoutHandler(co, "").Redirect)
+	resp, err := app.Test(httptest.NewRequest("GET", "/pay/M1/ord-1", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 404 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Retry-After"); got != "" {
+		t.Fatalf("must not auto-refresh, got Retry-After=%q", got)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("wrong content-type %q", ct)
+	}
+}
+
 func TestCheckout_UnavailableShowsHTML(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	co := svcmock.NewMockCheckouts(ctrl)

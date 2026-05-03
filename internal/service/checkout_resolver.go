@@ -68,6 +68,7 @@ func NewCheckoutResolver(opts CheckoutResolverOptions) Checkouts {
 }
 
 var (
+	ErrOrderNotFound = errors.New("order not found")
 	ErrOrderNotReady = errors.New("order not yet available")
 	ErrUnavailable   = errors.New("checkout temporarily unavailable")
 )
@@ -99,8 +100,8 @@ func (r *checkoutResolver) Resolve(ctx context.Context, merchantID, orderID stri
 	merchant, err := r.merchants.GetByMerchantID(ctx, merchantID)
 	if err != nil {
 		if errors.Is(err, repository.ErrMerchantNotFound) {
-			middleware.CheckoutResolveResult.WithLabelValues("not_ready").Inc()
-			return "", ErrOrderNotReady
+			middleware.CheckoutResolveResult.WithLabelValues("not_found").Inc()
+			return "", ErrOrderNotFound
 		}
 		middleware.CheckoutResolveResult.WithLabelValues("failed").Inc()
 		return "", fmt.Errorf("load merchant: %w", err)
@@ -114,8 +115,8 @@ func (r *checkoutResolver) Resolve(ctx context.Context, merchantID, orderID stri
 	middleware.CheckoutResolveDuration.WithLabelValues("db_lookup").Observe(time.Since(t0).Seconds())
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			middleware.CheckoutResolveResult.WithLabelValues("not_ready").Inc()
-			return "", ErrOrderNotReady
+			middleware.CheckoutResolveResult.WithLabelValues("not_found").Inc()
+			return "", ErrOrderNotFound
 		}
 		middleware.CheckoutResolveResult.WithLabelValues("failed").Inc()
 		return "", fmt.Errorf("load order: %w", err)

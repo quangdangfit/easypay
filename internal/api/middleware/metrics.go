@@ -54,7 +54,7 @@ var (
 	CheckoutResolveResult = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "checkout_resolve_result_total",
 		Help: "Outcome of /pay/:id resolutions.",
-	}, []string{"result"}) // cached_local | cached_db | created | rate_limited | breaker_open | not_ready | failed
+	}, []string{"result"}) // cached_local | cached_db | created | rate_limited | breaker_open | not_ready | not_found | failed
 
 	StripeRateLimited = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "stripe_rate_limited_total",
