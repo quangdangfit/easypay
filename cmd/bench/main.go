@@ -282,6 +282,7 @@ func doCreate(ctx context.Context, c *http.Client, cfg config, m *benchMerchant,
 		}
 		if json.Unmarshal(rb, &env) == nil {
 			orderID = env.Data.OrderID
+			fmt.Println(env.Data.CheckoutURL)
 		}
 		return orderID, status, nil
 	}
