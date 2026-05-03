@@ -109,6 +109,49 @@ func TestMerchantRepo_Insert_PicksLeastLoaded(t *testing.T) {
 	}
 }
 
+func TestMerchantRepo_GetByMerchantID(t *testing.T) {
+	db, mock := newMockDB(t)
+	repo := NewMerchantRepository(NewSingleShardRouter(db, 16), 16)
+	mock.ExpectQuery("FROM merchants WHERE merchant_id").
+		WithArgs("M1").WillReturnRows(merchantRow())
+
+	m, err := repo.GetByMerchantID(context.Background(), "M1")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if m.MerchantID != "M1" {
+		t.Fatalf("got: %+v", m)
+	}
+
+	// Cached on second call.
+	if _, err := repo.GetByMerchantID(context.Background(), "M1"); err != nil {
+		t.Fatalf("cached: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMerchantRepo_GetByMerchantID_NotFound(t *testing.T) {
+	db, mock := newMockDB(t)
+	repo := NewMerchantRepository(NewSingleShardRouter(db, 16), 16)
+	mock.ExpectQuery("FROM merchants WHERE merchant_id").
+		WithArgs("absent").WillReturnError(sql.ErrNoRows)
+	_, err := repo.GetByMerchantID(context.Background(), "absent")
+	if !errors.Is(err, ErrMerchantNotFound) {
+		t.Fatalf("want not found, got %v", err)
+	}
+}
+
+func TestMerchantRepo_NewMerchantRepository_ClampsZeroLogical(t *testing.T) {
+	db, _ := newMockDB(t)
+	// logicalShardCount=0 must be clamped to 1 internally.
+	repo := NewMerchantRepository(NewSingleShardRouter(db, 16), 0).(*merchantRepo)
+	if repo.logicalShardCount != 1 {
+		t.Fatalf("logicalShardCount=%d, want 1", repo.logicalShardCount)
+	}
+}
+
 func TestMerchantRepo_Insert_DuplicateError(t *testing.T) {
 	db, mock := newMockDB(t)
 	repo := NewMerchantRepository(NewSingleShardRouter(db, 16), 16)

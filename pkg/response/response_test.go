@@ -67,6 +67,7 @@ func TestErrorHelpers(t *testing.T) {
 	}{
 		{"bad_request", func(c *fiber.Ctx) error { return BadRequest(c, "bad", "x") }, 400, "bad"},
 		{"unauthorized", func(c *fiber.Ctx) error { return Unauthorized(c, "auth", "x") }, 401, "auth"},
+		{"conflict", func(c *fiber.Ctx) error { return Conflict(c, "dup", "x") }, 409, "dup"},
 		{"too_many", func(c *fiber.Ctx) error { return TooManyRequests(c, "rl", "x") }, 429, "rl"},
 		{"internal", func(c *fiber.Ctx) error { return InternalError(c, "boom", "x") }, 500, "boom"},
 	}
