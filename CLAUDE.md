@@ -176,7 +176,7 @@ migrations/             SQL up/down (single `001_init_schema`)
 integration_test/       testcontainers-go suites
 ```
 
-Key interfaces (defined as ports in their owning package, see source for exact signatures): `OrderRepository`, `MerchantRepository`, `OnchainTxRepository`, `StripeClient`, `EventPublisher`, `FraudChecker`, `Payments`, `Webhooks`, `Checkouts`, `Merchants`, `Locker`, `TokenBucket`, `URLCache`.
+Key interfaces (defined as ports in their owning package, see source for exact signatures): `OrderRepository`, `MerchantRepository`, `OnchainTxRepository`, `StripeClient`, `EventPublisher`, `Payments`, `Webhooks`, `Checkouts`, `Merchants`, `Locker`, `TokenBucket`, `URLCache`.
 
 ### Admin
 

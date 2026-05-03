@@ -23,6 +23,5 @@ package mocks
 //go:generate mockgen -source=../provider/blockchain/cursor.go -destination=blockchain/mock_cursor_store.go -package=bcmock
 
 //go:generate mockgen -source=../service/types.go -destination=service/mock_types.go -package=svcmock
-//go:generate mockgen -source=../service/fraud_service.go -destination=service/mock_fraud.go -package=svcmock
 
 //go:generate mockgen -source=../api/handler/health.go -destination=handler/mock_pinger.go -package=handlermock
