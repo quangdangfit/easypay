@@ -276,7 +276,8 @@ func doCreate(ctx context.Context, c *http.Client, cfg config, m *benchMerchant,
 	if status >= 200 && status < 300 {
 		var env struct {
 			Data struct {
-				OrderID string `json:"order_id"`
+				OrderID     string `json:"order_id"`
+				CheckoutURL string `json:"checkout_url"`
 			} `json:"data"`
 		}
 		if json.Unmarshal(rb, &env) == nil {
