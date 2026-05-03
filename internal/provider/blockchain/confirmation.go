@@ -118,7 +118,7 @@ func (t *ConfirmationTracker) processOne(ctx context.Context, p *domain.OnchainT
 		log.Warn("mark confirmed failed", "err", err)
 		return
 	}
-	if err := t.Orders.UpdateStatus(ctx, order.MerchantID, order.OrderID, domain.OrderStatusPaid, ""); err != nil {
+	if err := t.Orders.UpdateStatus(ctx, order.ShardIndex, order.MerchantID, order.OrderID, domain.OrderStatusPaid, ""); err != nil {
 		log.Warn("update order status failed", "err", err)
 		return
 	}

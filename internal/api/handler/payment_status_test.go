@@ -27,7 +27,7 @@ func newStatusApp(repo repository.OrderRepository, merchantID string) *fiber.App
 func TestPaymentStatus_HappyPath(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repo := repomock.NewMockOrderRepository(ctrl)
-	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), "M1", "ord-1").
+	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), "M1", "ord-1").
 		Return(&domain.Order{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", Status: domain.OrderStatusPaid}, nil)
 
 	app := newStatusApp(repo, "M1")
@@ -43,7 +43,7 @@ func TestPaymentStatus_HappyPath(t *testing.T) {
 func TestPaymentStatus_NotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repo := repomock.NewMockOrderRepository(ctrl)
-	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, repository.ErrNotFound)
+	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, repository.ErrNotFound)
 
 	app := newStatusApp(repo, "M1")
 	resp, _ := app.Test(httptest.NewRequest("GET", "/api/payments/missing", nil))
@@ -57,7 +57,7 @@ func TestPaymentStatus_NotFound(t *testing.T) {
 func TestPaymentStatus_BadOrderIDIsNotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	repo := repomock.NewMockOrderRepository(ctrl)
-	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any()).
+	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, domain.ErrInvalidOrderID).AnyTimes()
 
 	app := newStatusApp(repo, "M1")

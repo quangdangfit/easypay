@@ -22,7 +22,7 @@ func TestBlockchainTxHashDedup(t *testing.T) {
 	env := SetupEnv(t)
 	defer env.Cleanup(t)
 
-	repo := repository.NewOnchainTxRepository(env.DB)
+	repo := repository.NewOnchainTxRepository(env.Router)
 
 	hash := "0x" + strings.Repeat("ab", 32) // 66-char hex
 	tx := &domain.OnchainTransaction{

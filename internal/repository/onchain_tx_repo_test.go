@@ -24,7 +24,7 @@ func onchainRow() *sqlmock.Rows {
 
 func TestOnchainTxRepo_Create(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOnchainTxRepository(db)
+	repo := NewOnchainTxRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectExec("INSERT INTO onchain_transactions").
 		WillReturnResult(sqlmock.NewResult(5, 1))
 
@@ -43,7 +43,7 @@ func TestOnchainTxRepo_Create(t *testing.T) {
 
 func TestOnchainTxRepo_Create_NilAmount(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOnchainTxRepository(db)
+	repo := NewOnchainTxRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectExec("INSERT INTO onchain_transactions").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	if err := repo.Create(context.Background(), &domain.OnchainTransaction{TxHash: "x", Status: domain.OnchainTxStatusPending}); err != nil {
@@ -53,7 +53,7 @@ func TestOnchainTxRepo_Create_NilAmount(t *testing.T) {
 
 func TestOnchainTxRepo_Create_Error(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOnchainTxRepository(db)
+	repo := NewOnchainTxRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectExec("INSERT INTO onchain_transactions").WillReturnError(errors.New("dup"))
 	if err := repo.Create(context.Background(), &domain.OnchainTransaction{}); err == nil {
 		t.Fatal("expected error")
@@ -62,7 +62,7 @@ func TestOnchainTxRepo_Create_Error(t *testing.T) {
 
 func TestOnchainTxRepo_GetByTxHash(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOnchainTxRepository(db)
+	repo := NewOnchainTxRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectQuery("FROM onchain_transactions WHERE tx_hash").WillReturnRows(onchainRow())
 
 	tx, err := repo.GetByTxHash(context.Background(), "0xabc")
@@ -76,7 +76,7 @@ func TestOnchainTxRepo_GetByTxHash(t *testing.T) {
 
 func TestOnchainTxRepo_GetByTxHash_NotFound(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOnchainTxRepository(db)
+	repo := NewOnchainTxRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectQuery("FROM onchain_transactions").WillReturnError(sql.ErrNoRows)
 	_, err := repo.GetByTxHash(context.Background(), "missing")
 	if !errors.Is(err, ErrOnchainTxNotFound) {
@@ -86,7 +86,7 @@ func TestOnchainTxRepo_GetByTxHash_NotFound(t *testing.T) {
 
 func TestOnchainTxRepo_UpdateConfirmations(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOnchainTxRepository(db)
+	repo := NewOnchainTxRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectExec("UPDATE onchain_transactions").
 		WithArgs(uint64(8), "confirmed", "0xabc").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -97,7 +97,7 @@ func TestOnchainTxRepo_UpdateConfirmations(t *testing.T) {
 
 func TestOnchainTxRepo_UpdateConfirmations_NotFound(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOnchainTxRepository(db)
+	repo := NewOnchainTxRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectExec("UPDATE onchain_transactions").WillReturnResult(sqlmock.NewResult(0, 0))
 	err := repo.UpdateConfirmations(context.Background(), "x", 0, domain.OnchainTxStatusFailed)
 	if !errors.Is(err, ErrOnchainTxNotFound) {
@@ -107,7 +107,7 @@ func TestOnchainTxRepo_UpdateConfirmations_NotFound(t *testing.T) {
 
 func TestOnchainTxRepo_ListPendingByChain(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOnchainTxRepository(db)
+	repo := NewOnchainTxRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectQuery("FROM onchain_transactions.*WHERE chain_id").
 		WithArgs(int64(1), 5).WillReturnRows(onchainRow())
 
@@ -122,7 +122,7 @@ func TestOnchainTxRepo_ListPendingByChain(t *testing.T) {
 
 func TestOnchainTxRepo_ListPendingByChain_Error(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOnchainTxRepository(db)
+	repo := NewOnchainTxRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectQuery("FROM onchain_transactions").WillReturnError(errors.New("boom"))
 	_, err := repo.ListPendingByChain(context.Background(), 1, 5)
 	if err == nil {

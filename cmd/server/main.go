@@ -47,12 +47,14 @@ func run() error {
 	log := logger.L()
 	log.Info("starting easypay", "env", cfg.App.Env, "port", cfg.App.Port)
 
-	// MySQL — single pool for merchants + transactions + onchain tables.
-	db, err := repository.OpenMySQL(cfg.DB)
+	// MySQL — one pool per physical shard. The router maps a merchant's
+	// logical shard_index → physical pool. With db.shards empty, the router
+	// collapses to a single pool from db.dsn (legacy / dev).
+	router, err := repository.OpenShards(cfg.DB, cfg.App.LogicalShardCount)
 	if err != nil {
-		return fmt.Errorf("mysql: %w", err)
+		return fmt.Errorf("mysql shards: %w", err)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() { _ = router.Close() }()
 
 	// Redis.
 	rc, err := cache.NewRedis(cfg.Redis)
@@ -68,8 +70,8 @@ func run() error {
 	defer func() { _ = publisher.Close() }()
 
 	// Repos & cache helpers.
-	orderRepo := repository.NewOrderRepository(db)
-	merchantRepo := repository.NewMerchantRepository(db, cfg.App.LogicalShardCount)
+	orderRepo := repository.NewOrderRepository(router)
+	merchantRepo := repository.NewMerchantRepository(router, cfg.App.LogicalShardCount)
 	rl := cache.NewRateLimiter(rc)
 	locker := cache.NewLocker(rc)
 	urlCache := cache.NewURLCache(10000, 5*time.Second)
@@ -100,10 +102,11 @@ func run() error {
 		DefaultCancelURL:  cfg.App.CheckoutDefaultCancelURL,
 	})
 	merchantSvc := service.NewMerchantService(merchantRepo)
-	webhookSvc := service.NewWebhookService(stripeClient, orderRepo, publisher, rc, cfg.Stripe.WebhookSecret)
+	webhookSvc := service.NewWebhookService(stripeClient, orderRepo, merchantRepo, publisher, rc, cfg.Stripe.WebhookSecret)
 	checkoutResolver := service.NewCheckoutResolver(service.CheckoutResolverOptions{
 		Stripe:            stripeClient,
 		Repo:              orderRepo,
+		Merchants:         merchantRepo,
 		Locker:            locker,
 		URLCache:          urlCache,
 		Bucket:            stripeBucket,
@@ -118,7 +121,7 @@ func run() error {
 	merchantH := handler.NewMerchantHandler(merchantSvc)
 
 	healthH := handler.NewHealthHandler(
-		&repository.MySQLPinger{DB: db},
+		&repository.ShardRouterPinger{Router: router},
 		&cache.RedisPinger{Client: rc},
 		kafka.NewPinger(cfg.Kafka),
 	)
@@ -174,8 +177,8 @@ func run() error {
 		if err != nil {
 			log.Warn("blockchain client unavailable, listener disabled", "err", err)
 		} else {
-			onchainTxRepo := repository.NewOnchainTxRepository(db)
-			cursor := blockchain.NewMySQLCursor(db)
+			onchainTxRepo := repository.NewOnchainTxRepository(router)
+			cursor := blockchain.NewMySQLCursor(router)
 			chainCfg := blockchain.ChainConfig{
 				ChainID:               cfg.Blockchain.ChainID,
 				ContractAddress:       common.HexToAddress(cfg.Blockchain.ContractAddress),

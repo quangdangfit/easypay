@@ -43,7 +43,7 @@ func orderRow() *sqlmock.Rows {
 
 func TestOrderRepo_Insert(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectExec("INSERT INTO transactions").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -66,7 +66,7 @@ func TestOrderRepo_Insert(t *testing.T) {
 
 func TestOrderRepo_Insert_Duplicate(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectExec("INSERT INTO transactions").
 		WillReturnError(errors.New("Error 1062: Duplicate entry"))
 
@@ -81,7 +81,7 @@ func TestOrderRepo_Insert_Duplicate(t *testing.T) {
 
 func TestOrderRepo_Insert_BadTxnHex(t *testing.T) {
 	db, _ := newMockDB(t)
-	repo := NewOrderRepository(db)
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
 	err := repo.Insert(context.Background(), &domain.Order{
 		MerchantID: testMerchant, TransactionID: "tooshort", OrderID: testOrderID,
 		Amount: 1, Currency: "USD", Status: domain.OrderStatusCreated, PaymentMethod: "card",
@@ -93,7 +93,7 @@ func TestOrderRepo_Insert_BadTxnHex(t *testing.T) {
 
 func TestOrderRepo_Insert_BadOrderID(t *testing.T) {
 	db, _ := newMockDB(t)
-	repo := NewOrderRepository(db)
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
 	err := repo.Insert(context.Background(), &domain.Order{
 		MerchantID: testMerchant, TransactionID: testTxnHex, OrderID: "has space",
 		Amount: 1, Currency: "USD", Status: domain.OrderStatusCreated, PaymentMethod: "card",
@@ -105,11 +105,11 @@ func TestOrderRepo_Insert_BadOrderID(t *testing.T) {
 
 func TestOrderRepo_GetByTransactionID(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectQuery("SELECT.*FROM transactions WHERE merchant_id").
 		WillReturnRows(orderRow())
 
-	o, err := repo.GetByTransactionID(context.Background(), testMerchant, testTxnHex)
+	o, err := repo.GetByTransactionID(context.Background(), 0, testMerchant, testTxnHex)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -120,11 +120,11 @@ func TestOrderRepo_GetByTransactionID(t *testing.T) {
 
 func TestOrderRepo_GetByTransactionID_NotFound(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectQuery("SELECT.*FROM transactions").
 		WillReturnError(sql.ErrNoRows)
 
-	_, err := repo.GetByTransactionID(context.Background(), testMerchant, testTxnHex)
+	_, err := repo.GetByTransactionID(context.Background(), 0, testMerchant, testTxnHex)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
@@ -132,11 +132,11 @@ func TestOrderRepo_GetByTransactionID_NotFound(t *testing.T) {
 
 func TestOrderRepo_GetByMerchantOrderID(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectQuery("SELECT.*FROM transactions WHERE merchant_id = . AND order_id").
 		WillReturnRows(orderRow())
 
-	o, err := repo.GetByMerchantOrderID(context.Background(), testMerchant, testOrderID)
+	o, err := repo.GetByMerchantOrderID(context.Background(), 0, testMerchant, testOrderID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -147,8 +147,8 @@ func TestOrderRepo_GetByMerchantOrderID(t *testing.T) {
 
 func TestOrderRepo_GetByMerchantOrderID_BadFormat(t *testing.T) {
 	db, _ := newMockDB(t)
-	repo := NewOrderRepository(db)
-	_, err := repo.GetByMerchantOrderID(context.Background(), testMerchant, "has space")
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
+	_, err := repo.GetByMerchantOrderID(context.Background(), 0, testMerchant, "has space")
 	if !errors.Is(err, domain.ErrInvalidOrderID) {
 		t.Fatalf("want ErrInvalidOrderID, got %v", err)
 	}
@@ -156,21 +156,21 @@ func TestOrderRepo_GetByMerchantOrderID_BadFormat(t *testing.T) {
 
 func TestOrderRepo_UpdateStatus(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectExec("UPDATE transactions").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	if err := repo.UpdateStatus(context.Background(), testMerchant, testOrderID, domain.OrderStatusPaid, "pi_x"); err != nil {
+	if err := repo.UpdateStatus(context.Background(), 0, testMerchant, testOrderID, domain.OrderStatusPaid, "pi_x"); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 }
 
 func TestOrderRepo_UpdateStatus_NotFound(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectExec("UPDATE transactions").
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	err := repo.UpdateStatus(context.Background(), testMerchant, testOrderID, domain.OrderStatusPaid, "")
+	err := repo.UpdateStatus(context.Background(), 0, testMerchant, testOrderID, domain.OrderStatusPaid, "")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
@@ -178,21 +178,21 @@ func TestOrderRepo_UpdateStatus_NotFound(t *testing.T) {
 
 func TestOrderRepo_UpdateCheckout(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectExec("UPDATE transactions").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	if err := repo.UpdateCheckout(context.Background(), testMerchant, testOrderID, "cs_x", "pi_x"); err != nil {
+	if err := repo.UpdateCheckout(context.Background(), 0, testMerchant, testOrderID, "cs_x", "pi_x"); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 }
 
 func TestOrderRepo_UpdateCheckout_NotFound(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewOrderRepository(db)
+	repo := NewOrderRepository(NewSingleShardRouter(db, 16))
 	mock.ExpectExec("UPDATE transactions").
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	err := repo.UpdateCheckout(context.Background(), testMerchant, testOrderID, "", "")
+	err := repo.UpdateCheckout(context.Background(), 0, testMerchant, testOrderID, "", "")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want not found, got %v", err)
 	}

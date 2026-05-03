@@ -23,8 +23,12 @@ type onchainTxRepo struct {
 	db *sql.DB
 }
 
-func NewOnchainTxRepository(db *sql.DB) OnchainTxRepository {
-	return &onchainTxRepo{db: db}
+// NewOnchainTxRepository builds the on-chain repo over the control-plane
+// pool. onchain_transactions is keyed on (tx_hash, order_id, chain_id) and
+// has no merchant_id column — there is nothing meaningful to shard on, so
+// it lives globally on the control plane.
+func NewOnchainTxRepository(router ShardRouter) OnchainTxRepository {
+	return &onchainTxRepo{db: router.Control()}
 }
 
 const onchainCols = `id, tx_hash, block_number, order_id, payer, token, amount, chain_id,

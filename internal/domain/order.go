@@ -44,6 +44,11 @@ type Order struct {
 	StripePaymentIntentID string
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
+	// ShardIndex is the merchant's logical shard, copied from
+	// merchants.shard_index. Set by callers before Insert and stamped on
+	// every row read. Follow-up writes (UpdateStatus, UpdateCheckout) read
+	// it so the row stays on the physical shard it was first written to.
+	ShardIndex uint8
 }
 
 // ErrInvalidOrderID is returned when a merchant-supplied order_id fails

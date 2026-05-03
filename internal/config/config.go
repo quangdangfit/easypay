@@ -51,6 +51,22 @@ type AppConfig struct {
 }
 
 type DBConfig struct {
+	// DSN is the legacy single-pool form. When Shards is non-empty it is
+	// ignored. When Shards is empty and DSN is set, the router collapses to
+	// a single physical pool — useful for dev/test.
+	DSN          string
+	MaxOpenConns int
+	MaxIdleConns int
+	// Shards is the explicit list of physical pools. Pool index 0 is the
+	// "control plane": home of merchants, onchain_transactions, and
+	// block_cursors. The number of physical shards must divide
+	// AppConfig.LogicalShardCount evenly.
+	Shards []ShardDBConfig
+}
+
+// ShardDBConfig describes one physical MySQL pool. Connection caps fall
+// back to DBConfig.MaxOpenConns / MaxIdleConns when zero.
+type ShardDBConfig struct {
 	DSN          string
 	MaxOpenConns int
 	MaxIdleConns int
@@ -130,6 +146,13 @@ type rawAppConfig struct {
 }
 
 type rawDBConfig struct {
+	DSN          string             `yaml:"dsn"`
+	MaxOpenConns int                `yaml:"max_open_conns"`
+	MaxIdleConns int                `yaml:"max_idle_conns"`
+	Shards       []rawShardDBConfig `yaml:"shards"`
+}
+
+type rawShardDBConfig struct {
 	DSN          string `yaml:"dsn"`
 	MaxOpenConns int    `yaml:"max_open_conns"`
 	MaxIdleConns int    `yaml:"max_idle_conns"`
@@ -234,6 +257,7 @@ func (r *rawConfig) toConfig() (*Config, error) {
 			DSN:          r.DB.DSN,
 			MaxOpenConns: intDefault(r.DB.MaxOpenConns, 100),
 			MaxIdleConns: intDefault(r.DB.MaxIdleConns, 25),
+			Shards:       toShardDBConfigs(r.DB.Shards),
 		},
 		Redis: RedisConfig{
 			Addr:     stringDefault(r.Redis.Addr, "localhost:6379"),
@@ -272,8 +296,22 @@ func (r *rawConfig) toConfig() (*Config, error) {
 }
 
 func validate(c *Config) error {
-	if c.DB.DSN == "" {
-		return fmt.Errorf("db.dsn is required")
+	if len(c.DB.Shards) == 0 && c.DB.DSN == "" {
+		return fmt.Errorf("db.dsn or db.shards is required")
+	}
+	for i, s := range c.DB.Shards {
+		if s.DSN == "" {
+			return fmt.Errorf("db.shards[%d].dsn is required", i)
+		}
+	}
+	if n := len(c.DB.Shards); n > 0 {
+		L := int(c.App.LogicalShardCount)
+		if L < n {
+			return fmt.Errorf("app.logical_shard_count (%d) must be >= len(db.shards) (%d)", L, n)
+		}
+		if L%n != 0 {
+			return fmt.Errorf("app.logical_shard_count (%d) must be divisible by len(db.shards) (%d)", L, n)
+		}
 	}
 	if c.App.Port <= 0 || c.App.Port > 65535 {
 		return fmt.Errorf("invalid app.port: %d", c.App.Port)
@@ -323,6 +361,20 @@ func sliceDefault(v, def []string) []string {
 		return def
 	}
 	return v
+}
+
+func toShardDBConfigs(in []rawShardDBConfig) []ShardDBConfig {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ShardDBConfig, len(in))
+	for i, s := range in {
+		// rawShardDBConfig and ShardDBConfig have the same field shape;
+		// the conversion is structural so staticcheck S1016 prefers a
+		// type cast over a struct-literal copy.
+		out[i] = ShardDBConfig(s)
+	}
+	return out
 }
 
 func parseDurationDefault(v string, def time.Duration) (time.Duration, error) {

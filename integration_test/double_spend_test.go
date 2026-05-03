@@ -31,7 +31,8 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 	env := SetupEnv(t)
 	defer env.Cleanup(t)
 
-	orderRepo := repository.NewOrderRepository(env.DB)
+	orderRepo := repository.NewOrderRepository(env.Router)
+	merchantRepo := repository.NewMerchantRepository(env.Router, 16)
 	mock := NewMockStripe()
 
 	kafkaCfg := config.KafkaConfig{
@@ -43,8 +44,9 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 	publisher := kafka.NewPublisher(kafkaCfg)
 	defer func() { _ = publisher.Close() }()
 
-	svc := service.NewWebhookService(mock, orderRepo, publisher, env.Redis, webhookSecret)
+	svc := service.NewWebhookService(mock, orderRepo, merchantRepo, publisher, env.Redis, webhookSecret)
 	const merchantID = "M_WB"
+	SeedMerchant(t, env.DB, merchantID, "ms-secret", "")
 
 	t.Run("same event.id replayed concurrently", func(t *testing.T) {
 		seed := SeedOrder(t, orderRepo, merchantID, "DS-1", 1500, domain.OrderStatusPending, func(o *domain.Order) {
@@ -86,7 +88,7 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 			t.Errorf("expected %d duplicates, got %d", workers-1, dupes.Load())
 		}
 
-		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), seed.MerchantID, seed.OrderID)
+		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), 0, seed.MerchantID, seed.OrderID)
 		if o.Status != domain.OrderStatusPaid {
 			t.Errorf("status: got %s want paid", o.Status)
 		}
@@ -124,7 +126,7 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 			t.Fatalf("expected all %d to succeed, got ok=%d fail=%d", workers, ok.Load(), fail.Load())
 		}
 
-		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), seed.MerchantID, seed.OrderID)
+		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), 0, seed.MerchantID, seed.OrderID)
 		if o.Status != domain.OrderStatusPaid {
 			t.Fatalf("status: got %s want paid", o.Status)
 		}

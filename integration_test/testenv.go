@@ -25,8 +25,13 @@ import (
 
 // TestEnv holds connections to dockerised dependencies for integration tests.
 // Use SetupEnv to spin everything up; defer Cleanup to tear it down.
+//
+// Router wraps DB as a single-pool ShardRouter — sufficient for the
+// integration suite, which uses one MySQL container. Production runs N
+// pools; sharding is exercised by unit tests against the router itself.
 type TestEnv struct {
 	DB           *sql.DB
+	Router       repository.ShardRouter
 	Redis        *redis.Client
 	KafkaBrokers []string
 
@@ -64,6 +69,9 @@ func SetupEnv(t *testing.T) *TestEnv {
 		t.Fatalf("mysql open: %v", err)
 	}
 	env.DB = db
+	// LogicalShardCount of 16 matches the production default. The router
+	// is single-pool: every logical index routes to the same DB.
+	env.Router = repository.NewSingleShardRouter(db, 16)
 
 	if err := runMigrations(db); err != nil {
 		t.Fatalf("migrations: %v", err)

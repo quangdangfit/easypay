@@ -28,8 +28,8 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 	}
 	s.mock = repomock.NewMockOrderRepository(gomock.NewController(t))
 	s.mock.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	s.mock.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ string, id string) (*domain.Order, error) {
+	s.mock.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ uint8, _ string, id string) (*domain.Order, error) {
 			if o, ok := s.byID[id]; ok {
 				return o, nil
 			}
@@ -42,19 +42,19 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 			}
 			return nil, repository.ErrNotFound
 		}).AnyTimes()
-	s.mock.EXPECT().GetByTransactionID(gomock.Any(), gomock.Any(), gomock.Any()).
+	s.mock.EXPECT().GetByTransactionID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, repository.ErrNotFound).AnyTimes()
 	s.mock.EXPECT().GetByPaymentIntentID(gomock.Any(), gomock.Any()).
 		Return(nil, repository.ErrNotFound).AnyTimes()
-	s.mock.EXPECT().UpdateStatus(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ string, id string, st domain.OrderStatus, _ string) error {
+	s.mock.EXPECT().UpdateStatus(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ uint8, _ string, id string, st domain.OrderStatus, _ string) error {
 			if o, ok := s.byID[id]; ok {
 				o.Status = st
 				return nil
 			}
 			return repository.ErrNotFound
 		}).AnyTimes()
-	s.mock.EXPECT().UpdateCheckout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	s.mock.EXPECT().UpdateCheckout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil).AnyTimes()
 	s.mock.EXPECT().GetPendingBefore(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, nil).AnyTimes()

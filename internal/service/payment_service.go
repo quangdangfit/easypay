@@ -148,6 +148,7 @@ func (s *paymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 		Currency:      normalizedCurrency,
 		Status:        domain.OrderStatusCreated,
 		PaymentMethod: requestedMethod,
+		ShardIndex:    in.Merchant.ShardIndex,
 	}
 	if err := s.repo.Insert(ctx, row); err != nil {
 		if !errors.Is(err, repository.ErrDuplicateOrder) {
@@ -155,7 +156,7 @@ func (s *paymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 		}
 		// Loser of the (merchant_id, transaction_id) UNIQUE race. Find the
 		// winner and return its response. Material-mismatch is a 409.
-		existing, gErr := s.repo.GetByTransactionID(ctx, in.Merchant.MerchantID, txnID)
+		existing, gErr := s.repo.GetByTransactionID(ctx, in.Merchant.ShardIndex, in.Merchant.MerchantID, txnID)
 		if gErr != nil {
 			return nil, fmt.Errorf("idem lookup: %w", gErr)
 		}
@@ -216,7 +217,7 @@ func (s *paymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 		result.ClientSecret = session.ClientSecret
 		// Persist Stripe artefacts so future retries / lookups can
 		// reconstruct the URL without another Stripe call.
-		if err := s.repo.UpdateCheckout(ctx, in.Merchant.MerchantID, in.OrderID, session.ID, session.PaymentIntentID); err != nil {
+		if err := s.repo.UpdateCheckout(ctx, in.Merchant.ShardIndex, in.Merchant.MerchantID, in.OrderID, session.ID, session.PaymentIntentID); err != nil {
 			return nil, fmt.Errorf("persist stripe session: %w", err)
 		}
 	}

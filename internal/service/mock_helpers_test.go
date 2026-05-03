@@ -85,15 +85,15 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 			s.byTxn[key] = cp
 			return nil
 		}).AnyTimes()
-	s.mock.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, merchantID, orderID string) (*domain.Order, error) {
+	s.mock.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ uint8, merchantID, orderID string) (*domain.Order, error) {
 			if o, ok := s.lookupByID(merchantID + ":" + orderID); ok {
 				return o, nil
 			}
 			return nil, repository.ErrNotFound
 		}).AnyTimes()
-	s.mock.EXPECT().GetByTransactionID(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, merchantID, txnID string) (*domain.Order, error) {
+	s.mock.EXPECT().GetByTransactionID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ uint8, merchantID, txnID string) (*domain.Order, error) {
 			if o, ok := s.lookupByTxn(merchantID + ":" + txnID); ok {
 				return o, nil
 			}
@@ -113,8 +113,8 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 			}
 			return nil, repository.ErrNotFound
 		}).AnyTimes()
-	s.mock.EXPECT().UpdateStatus(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, merchantID, orderID string, st domain.OrderStatus, pi string) error {
+	s.mock.EXPECT().UpdateStatus(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ uint8, merchantID, orderID string, st domain.OrderStatus, pi string) error {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			o, ok := s.byID[merchantID+":"+orderID]
@@ -127,8 +127,8 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 			}
 			return nil
 		}).AnyTimes()
-	s.mock.EXPECT().UpdateCheckout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, merchantID, orderID, sid, pi string) error {
+	s.mock.EXPECT().UpdateCheckout(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ uint8, merchantID, orderID, sid, pi string) error {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			s.updateCheckouts++
@@ -236,6 +236,23 @@ func newWebhookStripe(t *testing.T, opts webhookStripeOpts) *stripemock.MockClie
 	m.EXPECT().CreateCheckoutSession(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	m.EXPECT().CreatePaymentIntent(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	m.EXPECT().GetCheckoutSession(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	return m
+}
+
+// stubMerchants returns a MerchantRepository mock that resolves any
+// merchant_id to a fixed shard_index. Used by webhook/checkout-resolver
+// tests that need a fast LRU-style merchant lookup but don't otherwise
+// care about the merchant record.
+func stubMerchants(t *testing.T, shardIdx uint8) *repomock.MockMerchantRepository {
+	t.Helper()
+	m := repomock.NewMockMerchantRepository(gomock.NewController(t))
+	m.EXPECT().GetByMerchantID(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, id string) (*domain.Merchant, error) {
+			return &domain.Merchant{MerchantID: id, ShardIndex: shardIdx, Status: domain.MerchantStatusActive}, nil
+		}).AnyTimes()
+	m.EXPECT().GetByAPIKey(gomock.Any(), gomock.Any()).
+		Return(nil, repository.ErrMerchantNotFound).AnyTimes()
+	m.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return m
 }
 

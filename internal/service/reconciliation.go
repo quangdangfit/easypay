@@ -101,7 +101,7 @@ func (r *orderReconciliation) reconcileOne(ctx context.Context, o *domain.Order)
 	}
 	switch pi.Status {
 	case "succeeded":
-		if err := r.Orders.UpdateStatus(ctx, o.MerchantID, o.OrderID, domain.OrderStatusPaid, pi.ID); err != nil {
+		if err := r.Orders.UpdateStatus(ctx, o.ShardIndex, o.MerchantID, o.OrderID, domain.OrderStatusPaid, pi.ID); err != nil {
 			log.Warn("force confirm failed", "err", err)
 			return
 		}
@@ -116,6 +116,6 @@ func (r *orderReconciliation) reconcileOne(ctx context.Context, o *domain.Order)
 		})
 		log.Info("force-confirmed via reconciliation")
 	case "canceled", "requires_payment_method":
-		_ = r.Orders.UpdateStatus(ctx, o.MerchantID, o.OrderID, domain.OrderStatusFailed, pi.ID)
+		_ = r.Orders.UpdateStatus(ctx, o.ShardIndex, o.MerchantID, o.OrderID, domain.OrderStatusFailed, pi.ID)
 	}
 }

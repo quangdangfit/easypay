@@ -36,6 +36,7 @@ func newResolverWithDeps(t *testing.T, opts ...func(*CheckoutResolverOptions)) (
 	o := CheckoutResolverOptions{
 		Stripe:            d.stripeC.mock,
 		Repo:              d.repo.mock,
+		Merchants:         stubMerchants(t, 0),
 		Locker:            successLocker(t),
 		URLCache:          cache.NewURLCache(8, 5*time.Second),
 		Bucket:            allowingBucket(t),
@@ -123,7 +124,7 @@ func TestResolveAfterLock_ReturnsURLWhenPresent(t *testing.T) {
 		Repo:     repo.mock,
 		URLCache: cache.NewURLCache(8, time.Second),
 	}).(*checkoutResolver)
-	url, err := r.resolveAfterLock(context.Background(), tMerchant, tOrder, tKey())
+	url, err := r.resolveAfterLock(context.Background(), 0, tMerchant, tOrder, tKey())
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -137,7 +138,7 @@ func TestResolveAfterLock_NotReadyWhenMissing(t *testing.T) {
 		Repo:     newOrderStore(t).mock,
 		URLCache: cache.NewURLCache(8, time.Second),
 	}).(*checkoutResolver)
-	_, err := r.resolveAfterLock(context.Background(), tMerchant, "ord-none", tMerchant+":ord-none")
+	_, err := r.resolveAfterLock(context.Background(), 0, tMerchant, "ord-none", tMerchant+":ord-none")
 	if !errors.Is(err, ErrOrderNotReady) {
 		t.Fatalf("got %v", err)
 	}
@@ -146,7 +147,7 @@ func TestResolveAfterLock_NotReadyWhenMissing(t *testing.T) {
 func TestResolveAfterLock_NotReadyWhenSessionMissing(t *testing.T) {
 	repo := newOrderStore(t, &domain.Order{MerchantID: tMerchant, OrderID: tOrder, Amount: 1}) // no StripeSessionID
 	r := NewCheckoutResolver(CheckoutResolverOptions{Repo: repo.mock}).(*checkoutResolver)
-	_, err := r.resolveAfterLock(context.Background(), tMerchant, tOrder, tKey())
+	_, err := r.resolveAfterLock(context.Background(), 0, tMerchant, tOrder, tKey())
 	if !errors.Is(err, ErrOrderNotReady) {
 		t.Fatalf("got %v", err)
 	}

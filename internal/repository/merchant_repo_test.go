@@ -21,7 +21,7 @@ func merchantRow() *sqlmock.Rows {
 
 func TestMerchantRepo_GetByAPIKey(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewMerchantRepository(db, 16)
+	repo := NewMerchantRepository(NewSingleShardRouter(db, 16), 16)
 	mock.ExpectQuery("FROM merchants WHERE api_key").
 		WithArgs("k").WillReturnRows(merchantRow())
 
@@ -48,7 +48,7 @@ func TestMerchantRepo_GetByAPIKey(t *testing.T) {
 
 func TestMerchantRepo_GetByAPIKey_NotFound(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewMerchantRepository(db, 16)
+	repo := NewMerchantRepository(NewSingleShardRouter(db, 16), 16)
 	mock.ExpectQuery("FROM merchants").WithArgs("absent").WillReturnError(sql.ErrNoRows)
 	_, err := repo.GetByAPIKey(context.Background(), "absent")
 	if !errors.Is(err, ErrMerchantNotFound) {
@@ -58,7 +58,7 @@ func TestMerchantRepo_GetByAPIKey_NotFound(t *testing.T) {
 
 func TestMerchantRepo_GetByAPIKey_QueryError(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewMerchantRepository(db, 16)
+	repo := NewMerchantRepository(NewSingleShardRouter(db, 16), 16)
 	mock.ExpectQuery("FROM merchants").WillReturnError(errors.New("conn refused"))
 	_, err := repo.GetByAPIKey(context.Background(), "k")
 	if err == nil {
@@ -69,7 +69,7 @@ func TestMerchantRepo_GetByAPIKey_QueryError(t *testing.T) {
 // Pick least loaded with no existing merchants → shard 0.
 func TestMerchantRepo_Insert_PicksZeroOnEmpty(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewMerchantRepository(db, 16)
+	repo := NewMerchantRepository(NewSingleShardRouter(db, 16), 16)
 	// pickLeastLoadedShard: empty result.
 	mock.ExpectQuery("SELECT shard_index, COUNT").
 		WithArgs(uint8(16)).
@@ -92,7 +92,7 @@ func TestMerchantRepo_Insert_PicksZeroOnEmpty(t *testing.T) {
 // When shard 0 already has 1 merchant and shards 1..15 are empty, pick 1.
 func TestMerchantRepo_Insert_PicksLeastLoaded(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewMerchantRepository(db, 16)
+	repo := NewMerchantRepository(NewSingleShardRouter(db, 16), 16)
 	mock.ExpectQuery("SELECT shard_index, COUNT").
 		WithArgs(uint8(16)).
 		WillReturnRows(sqlmock.NewRows([]string{"shard_index", "n"}).
@@ -111,7 +111,7 @@ func TestMerchantRepo_Insert_PicksLeastLoaded(t *testing.T) {
 
 func TestMerchantRepo_Insert_DuplicateError(t *testing.T) {
 	db, mock := newMockDB(t)
-	repo := NewMerchantRepository(db, 16)
+	repo := NewMerchantRepository(NewSingleShardRouter(db, 16), 16)
 	mock.ExpectQuery("SELECT shard_index, COUNT").
 		WillReturnRows(sqlmock.NewRows([]string{"shard_index", "n"}))
 	mock.ExpectExec("INSERT INTO merchants").

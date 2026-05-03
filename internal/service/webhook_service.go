@@ -30,19 +30,37 @@ var (
 type webhookService struct {
 	stripe        stripe.Client
 	repo          repository.OrderRepository
+	merchants     repository.MerchantRepository
 	publisher     kafka.EventPublisher
 	rc            *redis.Client
 	webhookSecret string
 }
 
-func NewWebhookService(s stripe.Client, repo repository.OrderRepository, p kafka.EventPublisher, rc *redis.Client, webhookSecret string) Webhooks {
+// NewWebhookService wires the Stripe-callback service. It needs a
+// MerchantRepository because Stripe events carry merchant_id but not the
+// merchant's logical shard — we resolve `merchant_id → shard_index` (cached
+// LRU hit) before each transactions-table call so the write lands on the
+// correct physical pool.
+func NewWebhookService(s stripe.Client, orders repository.OrderRepository, merchants repository.MerchantRepository, p kafka.EventPublisher, rc *redis.Client, webhookSecret string) Webhooks {
 	return &webhookService{
 		stripe:        s,
-		repo:          repo,
+		repo:          orders,
+		merchants:     merchants,
 		publisher:     p,
 		rc:            rc,
 		webhookSecret: webhookSecret,
 	}
+}
+
+// resolveShard looks up merchant_id → shard_index via the cached merchant
+// repo. Returns ErrWebhookOrderMissing semantics for unknown merchants
+// (the event is unprocessable; Stripe retries; ops alerts).
+func (s *webhookService) resolveShard(ctx context.Context, merchantID string) (uint8, error) {
+	m, err := s.merchants.GetByMerchantID(ctx, merchantID)
+	if err != nil {
+		return 0, fmt.Errorf("resolve merchant %s: %w", merchantID, err)
+	}
+	return m.ShardIndex, nil
 }
 
 // Process verifies the signature, dedupes by event.id, cross-checks with Stripe
@@ -132,14 +150,18 @@ func (s *webhookService) handleSucceeded(ctx context.Context, e *stripe.Event) e
 		}
 	}
 
-	if err := s.repo.UpdateStatus(ctx, merchantID, orderID, domain.OrderStatusPaid, piID); err != nil {
+	shardIdx, err := s.resolveShard(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.UpdateStatus(ctx, shardIdx, merchantID, orderID, domain.OrderStatusPaid, piID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return fmt.Errorf("%w: %s", ErrWebhookOrderMissing, orderID)
 		}
 		return fmt.Errorf("update order: %w", err)
 	}
 
-	order, err := s.repo.GetByMerchantOrderID(ctx, merchantID, orderID)
+	order, err := s.repo.GetByMerchantOrderID(ctx, shardIdx, merchantID, orderID)
 	if err != nil {
 		return fmt.Errorf("load order: %w", err)
 	}
@@ -169,7 +191,11 @@ func (s *webhookService) handleFailed(ctx context.Context, e *stripe.Event) erro
 	if piID == "" && o.Object == "payment_intent" {
 		piID = o.ID
 	}
-	if err := s.repo.UpdateStatus(ctx, merchantID, orderID, domain.OrderStatusFailed, piID); err != nil {
+	shardIdx, err := s.resolveShard(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.UpdateStatus(ctx, shardIdx, merchantID, orderID, domain.OrderStatusFailed, piID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return fmt.Errorf("%w: %s", ErrWebhookOrderMissing, orderID)
 		}
@@ -192,24 +218,38 @@ func (s *webhookService) handleRefunded(ctx context.Context, e *stripe.Event) er
 	}
 	orderID := o.Metadata["order_id"]
 	merchantID := o.Metadata["merchant_id"]
+	// shardIdx tracking is split: when we get here from metadata, we still
+	// need to resolve via merchantRepo. When we fall back to PI lookup, the
+	// global scatter-gather already stamps ShardIndex on the returned order.
+	var shardIdx uint8
+	shardKnown := false
 	if (orderID == "" || merchantID == "") && piID != "" {
 		// charge.refunded events sometimes don't carry our metadata; look up
-		// the order by payment_intent_id (single indexed query).
-		if order, lookupErr := s.repo.GetByPaymentIntentID(ctx, piID); lookupErr == nil {
-			orderID = order.OrderID
-			merchantID = order.MerchantID
+		// the order by payment_intent_id (scatter-gather across shards).
+		if found, lookupErr := s.repo.GetByPaymentIntentID(ctx, piID); lookupErr == nil {
+			orderID = found.OrderID
+			merchantID = found.MerchantID
+			shardIdx = found.ShardIndex
+			shardKnown = true
 		}
 	}
 	if orderID == "" || merchantID == "" {
 		return fmt.Errorf("event %s missing order_id/merchant_id and unresolvable", e.ID)
 	}
-	if err := s.repo.UpdateStatus(ctx, merchantID, orderID, domain.OrderStatusRefunded, piID); err != nil {
+	if !shardKnown {
+		idx, err := s.resolveShard(ctx, merchantID)
+		if err != nil {
+			return err
+		}
+		shardIdx = idx
+	}
+	if err := s.repo.UpdateStatus(ctx, shardIdx, merchantID, orderID, domain.OrderStatusRefunded, piID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return fmt.Errorf("%w: %s", ErrWebhookOrderMissing, orderID)
 		}
 		return fmt.Errorf("update order refunded: %w", err)
 	}
-	order, err := s.repo.GetByMerchantOrderID(ctx, merchantID, orderID)
+	order, err := s.repo.GetByMerchantOrderID(ctx, shardIdx, merchantID, orderID)
 	if err != nil {
 		return fmt.Errorf("load order: %w", err)
 	}
@@ -247,7 +287,7 @@ func (s *webhookService) CreateRefund(ctx context.Context, in RefundInput) (*Ref
 	if in.Merchant == nil || in.OrderID == "" {
 		return nil, fmt.Errorf("merchant + order_id required")
 	}
-	order, err := s.repo.GetByMerchantOrderID(ctx, in.Merchant.MerchantID, in.OrderID)
+	order, err := s.repo.GetByMerchantOrderID(ctx, in.Merchant.ShardIndex, in.Merchant.MerchantID, in.OrderID)
 	if err != nil {
 		return nil, fmt.Errorf("load order: %w", err)
 	}

@@ -25,7 +25,7 @@ func TestReconciliationCron(t *testing.T) {
 	env := SetupEnv(t)
 	defer env.Cleanup(t)
 
-	orderRepo := repository.NewOrderRepository(env.DB)
+	orderRepo := repository.NewOrderRepository(env.Router)
 
 	const merchantID = "M_RECON"
 	stuck := SeedOrder(t, orderRepo, merchantID, "RECON-1", 2500, domain.OrderStatusPending, func(o *domain.Order) {
@@ -101,7 +101,7 @@ func TestReconciliationCron(t *testing.T) {
 		t.Fatal("payment.confirmed event for reconciled order not found")
 	}
 
-	o, err := orderRepo.GetByMerchantOrderID(context.Background(), stuck.MerchantID, stuck.OrderID)
+	o, err := orderRepo.GetByMerchantOrderID(context.Background(), 0, stuck.MerchantID, stuck.OrderID)
 	if err != nil {
 		t.Fatalf("read order: %v", err)
 	}

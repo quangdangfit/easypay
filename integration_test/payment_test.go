@@ -22,7 +22,7 @@ func TestCreateOrder_HappyPath(t *testing.T) {
 	defer env.Cleanup(t)
 
 	stripeMock := NewMockStripe()
-	orderRepo := repository.NewOrderRepository(env.DB)
+	orderRepo := repository.NewOrderRepository(env.Router)
 
 	svc := service.NewPaymentService(stripeMock, orderRepo, service.PaymentServiceOptions{
 		DefaultCurrency: "USD",
@@ -42,7 +42,7 @@ func TestCreateOrder_HappyPath(t *testing.T) {
 	}
 
 	// Row must exist immediately after Create returns — sync write.
-	o, err := orderRepo.GetByMerchantOrderID(context.Background(), merchant.MerchantID, res.OrderID)
+	o, err := orderRepo.GetByMerchantOrderID(context.Background(), 0, merchant.MerchantID, res.OrderID)
 	if err != nil {
 		t.Fatalf("get order after Create: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestIdempotency_DuplicateOrder(t *testing.T) {
 	defer env.Cleanup(t)
 
 	stripeMock := NewMockStripe()
-	orderRepo := repository.NewOrderRepository(env.DB)
+	orderRepo := repository.NewOrderRepository(env.Router)
 
 	svc := service.NewPaymentService(stripeMock, orderRepo, service.PaymentServiceOptions{
 		DefaultCurrency: "USD",
@@ -105,7 +105,7 @@ func TestConcurrentCreate_Real(t *testing.T) {
 	defer env.Cleanup(t)
 
 	stripeMock := NewMockStripe()
-	orderRepo := repository.NewOrderRepository(env.DB)
+	orderRepo := repository.NewOrderRepository(env.Router)
 
 	svc := service.NewPaymentService(stripeMock, orderRepo, service.PaymentServiceOptions{
 		DefaultCurrency: "USD",
@@ -152,7 +152,7 @@ func TestConcurrentCreate_Real(t *testing.T) {
 	}
 
 	// Exactly one row in DB.
-	got, err := orderRepo.GetByMerchantOrderID(context.Background(), merchant.MerchantID, first.OrderID)
+	got, err := orderRepo.GetByMerchantOrderID(context.Background(), 0, merchant.MerchantID, first.OrderID)
 	if err != nil {
 		t.Fatalf("read winner row: %v", err)
 	}

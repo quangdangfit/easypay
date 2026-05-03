@@ -15,6 +15,22 @@ services:
       timeout: 3s
       retries: 20
 
+  mysql1:
+    image: mysql:8.4.5
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql1_data:/var/lib/mysql
+      - ./scripts/mysql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   redis:
     image: redis/redis-stack-server:7.2.0-v9
     restart: unless-stopped
@@ -59,5 +75,6 @@ services:
 
 volumes:
   mysql_data:
+  mysql1_data:
   redis_data:
   kafka_data:

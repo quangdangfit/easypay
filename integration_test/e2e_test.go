@@ -65,8 +65,8 @@ func TestFullPaymentFlow_E2E(t *testing.T) {
 	publisher := kafka.NewPublisher(kafkaCfg)
 	defer func() { _ = publisher.Close() }()
 
-	orderRepo := repository.NewOrderRepository(env.DB)
-	merchantRepo := repository.NewMerchantRepository(env.DB, 16)
+	orderRepo := repository.NewOrderRepository(env.Router)
+	merchantRepo := repository.NewMerchantRepository(env.Router, 16)
 	stripeMock := NewMockStripe()
 
 	paySvc := service.NewPaymentService(stripeMock, orderRepo, service.PaymentServiceOptions{
@@ -74,7 +74,7 @@ func TestFullPaymentFlow_E2E(t *testing.T) {
 		CryptoContract:  "0xCONTRACT",
 		CryptoChainID:   11155111,
 	})
-	webhookSvc := service.NewWebhookService(stripeMock, orderRepo, publisher, env.Redis, webhookSecret)
+	webhookSvc := service.NewWebhookService(stripeMock, orderRepo, merchantRepo, publisher, env.Redis, webhookSecret)
 
 	// Settlement consumer looks up the merchant per event.
 	lookup := func(mid string) consumer.MerchantCallback {
@@ -115,7 +115,7 @@ func TestFullPaymentFlow_E2E(t *testing.T) {
 	}
 
 	// ── Step 2: Row must be in MySQL synchronously ──────────────────────
-	landed, err := orderRepo.GetByMerchantOrderID(context.Background(), merchant.MerchantID, res.OrderID)
+	landed, err := orderRepo.GetByMerchantOrderID(context.Background(), 0, merchant.MerchantID, res.OrderID)
 	if err != nil {
 		t.Fatalf("order %s not found after Create: %v", res.OrderID, err)
 	}
@@ -134,7 +134,7 @@ func TestFullPaymentFlow_E2E(t *testing.T) {
 		t.Fatalf("webhook process: %v", err)
 	}
 
-	o, _ := orderRepo.GetByMerchantOrderID(context.Background(), merchant.MerchantID, res.OrderID)
+	o, _ := orderRepo.GetByMerchantOrderID(context.Background(), 0, merchant.MerchantID, res.OrderID)
 	if o.Status != domain.OrderStatusPaid {
 		t.Fatalf("status after webhook: got %s want paid", o.Status)
 	}

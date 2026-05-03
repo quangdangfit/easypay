@@ -28,10 +28,12 @@ func TestStripeWebhookFlow(t *testing.T) {
 	env := SetupEnv(t)
 	defer env.Cleanup(t)
 
-	orderRepo := repository.NewOrderRepository(env.DB)
+	orderRepo := repository.NewOrderRepository(env.Router)
+	merchantRepo := repository.NewMerchantRepository(env.Router, 16)
 	mock := NewMockStripe()
 
 	const merchantID = "M_WB"
+	SeedMerchant(t, env.DB, merchantID, "ms-secret", "")
 	type seeded struct {
 		order *domain.Order
 		piID  string
@@ -53,7 +55,7 @@ func TestStripeWebhookFlow(t *testing.T) {
 	publisher := kafka.NewPublisher(kafkaCfg)
 	defer func() { _ = publisher.Close() }()
 
-	svc := service.NewWebhookService(mock, orderRepo, publisher, env.Redis, webhookSecret)
+	svc := service.NewWebhookService(mock, orderRepo, merchantRepo, publisher, env.Redis, webhookSecret)
 
 	main := seed(t, "WB-1", "pi_wb_1")
 
@@ -91,7 +93,7 @@ func TestStripeWebhookFlow(t *testing.T) {
 		if err := svc.Process(context.Background(), payload, sig); err != nil {
 			t.Fatalf("process: %v", err)
 		}
-		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), main.order.MerchantID, main.order.OrderID)
+		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), 0, main.order.MerchantID, main.order.OrderID)
 		if o.Status != domain.OrderStatusPaid {
 			t.Fatalf("status: got %s want paid", o.Status)
 		}
@@ -116,7 +118,7 @@ func TestStripeWebhookFlow(t *testing.T) {
 		if err := svc.Process(context.Background(), payload, sig); err != nil {
 			t.Fatalf("process: %v", err)
 		}
-		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), s.order.MerchantID, s.order.OrderID)
+		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), 0, s.order.MerchantID, s.order.OrderID)
 		if o.Status != domain.OrderStatusFailed {
 			t.Fatalf("status: got %s want failed", o.Status)
 		}
@@ -142,7 +144,7 @@ func TestStripeWebhookFlow(t *testing.T) {
 		if err := svc.Process(context.Background(), payload, sig); err != nil {
 			t.Fatalf("process: %v", err)
 		}
-		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), s.order.MerchantID, s.order.OrderID)
+		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), 0, s.order.MerchantID, s.order.OrderID)
 		if o.Status != domain.OrderStatusRefunded {
 			t.Fatalf("status: got %s want refunded", o.Status)
 		}

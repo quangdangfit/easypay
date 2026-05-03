@@ -28,14 +28,16 @@ type merchantRepo struct {
 }
 
 // NewMerchantRepository builds a merchant repo whose Insert path picks
-// shards in [0, logicalShardCount). logicalShardCount must be >= 1; values
-// of 0 are clamped up to 1 to keep the picker safe.
-func NewMerchantRepository(db *sql.DB, logicalShardCount uint8) MerchantRepository {
+// shards in [0, logicalShardCount). The merchants table lives only on the
+// control-plane pool (router.Control()); we resolve to *sql.DB at
+// construction so all subsequent queries are a direct call. logicalShardCount
+// must be >= 1; values of 0 are clamped up to 1 to keep the picker safe.
+func NewMerchantRepository(router ShardRouter, logicalShardCount uint8) MerchantRepository {
 	if logicalShardCount == 0 {
 		logicalShardCount = 1
 	}
 	return &merchantRepo{
-		db:                db,
+		db:                router.Control(),
 		cache:             newLRUCache(1024, 5*time.Minute),
 		logicalShardCount: logicalShardCount,
 	}
