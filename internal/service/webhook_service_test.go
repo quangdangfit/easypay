@@ -189,3 +189,42 @@ func TestCreateRefund_RequiresMerchantAndOrder(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestWebhook_OrderNotFound(t *testing.T) {
+	repo := newTxStore(t) // empty
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
+
+	body := signedEvent(t, sec, "evt_notfound", "payment_intent.succeeded", "missing-order", "pi_1")
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	err := svc.Process(context.Background(), body, hdr)
+	if !errors.Is(err, ErrWebhookOrderMissing) {
+		t.Fatalf("expected ErrWebhookOrderMissing, got %v", err)
+	}
+}
+
+func TestCreateRefund_OrderNotFound(t *testing.T) {
+	repo := newTxStore(t) // empty
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), newEventCapture(t).mock, rc, sec)
+	_, err := svc.CreateRefund(context.Background(), RefundInput{
+		Merchant: &domain.Merchant{MerchantID: "M1"}, OrderID: "missing",
+	})
+	if err == nil {
+		t.Fatal("expected order not found error")
+	}
+}
+
+func TestCreateRefund_StripeFails(t *testing.T) {
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1"})
+	rc := newRedis(t)
+	sf := newWebhookStripe(t, webhookStripeOpts{refundErr: errors.New("stripe error")})
+	svc := NewWebhookService(sf, repo.mock, stubMerchants(t, 0), newEventCapture(t).mock, rc, sec)
+	_, err := svc.CreateRefund(context.Background(), RefundInput{
+		Merchant: &domain.Merchant{MerchantID: "M1"}, OrderID: "ord-1", Amount: 500,
+	})
+	if err == nil {
+		t.Fatal("expected stripe error to propagate")
+	}
+}
