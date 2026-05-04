@@ -223,12 +223,9 @@ func SeedMerchant(t *testing.T, db *sql.DB, merchantID, secretKey, callbackURL s
 // "stuck" predicate fires without a real wait. Used by reconciliation_test.go.
 func BackdateOrder(t *testing.T, db *sql.DB, merchantID, orderID string, age time.Duration) {
 	t.Helper()
-	created := time.Now().Add(-age).Unix()
-	if created < 0 {
-		created = 0
-	}
+	created := time.Now().UTC().Add(-age)
 	q := "UPDATE transactions SET created_at = ? WHERE merchant_id = ? AND order_id = ?"
-	if _, err := db.ExecContext(context.Background(), q, uint32(created), []byte(merchantID), orderID); err != nil {
+	if _, err := db.ExecContext(context.Background(), q, created, []byte(merchantID), orderID); err != nil {
 		t.Fatalf("backdate order: %v", err)
 	}
 }

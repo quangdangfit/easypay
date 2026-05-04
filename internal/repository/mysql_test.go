@@ -3,10 +3,15 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+
+	"github.com/quangdangfit/easypay/internal/config"
 )
 
 func TestWithClientFoundRows(t *testing.T) {
@@ -23,6 +28,21 @@ func TestWithClientFoundRows(t *testing.T) {
 		if got != c.want {
 			t.Errorf("\nin:   %s\ngot:  %s\nwant: %s", c.in, got, c.want)
 		}
+	}
+}
+
+func TestOpenMySQL_PingFailure(t *testing.T) {
+	t.Parallel()
+	_, err := OpenMySQL(config.DBConfig{
+		DSN:          "root:root@tcp(127.0.0.1:1)/payments?timeout=100ms",
+		MaxOpenConns: 1,
+		MaxIdleConns: 1,
+	})
+	if err == nil {
+		t.Fatal("expected ping mysql error")
+	}
+	if !strings.Contains(err.Error(), "ping mysql") {
+		t.Fatalf("error %q does not contain ping mysql", err)
 	}
 }
 
@@ -62,6 +82,57 @@ CREATE TABLE b (id INT);
 	}
 	if !strings.HasPrefix(got[1], "CREATE TABLE b") {
 		t.Errorf("stmt[1] = %q, want CREATE TABLE b ...", got[1])
+	}
+}
+
+func TestRunMigrationsAll_AppliesSQLFile(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectExec("CREATE TABLE a \\(id INT\\)").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("CREATE TABLE b \\(id INT\\)").WillReturnResult(sqlmock.NewResult(0, 0))
+
+	dir := t.TempDir()
+	body := "-- comment with ; semicolon\nCREATE TABLE a (id INT);\nCREATE TABLE b (id INT);\n"
+	path := filepath.Join(dir, "001_init.up.sql")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write migration: %v", err)
+	}
+
+	r := NewSingleShardRouter(db, 1)
+	if err := RunMigrationsAll(r, dir); err != nil {
+		t.Fatalf("RunMigrationsAll: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+func TestRunMigrationsAll_ExecError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectExec("CREATE TABLE fail_me \\(id INT\\)").WillReturnError(errors.New("boom"))
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "001_fail.up.sql")
+	if err := os.WriteFile(path, []byte("CREATE TABLE fail_me (id INT);"), 0o600); err != nil {
+		t.Fatalf("write migration: %v", err)
+	}
+
+	r := NewSingleShardRouter(db, 1)
+	err = RunMigrationsAll(r, dir)
+	if err == nil {
+		t.Fatal("expected migration apply error")
+	}
+	if !strings.Contains(err.Error(), "apply 001_fail.up.sql on pool 0") || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
