@@ -144,6 +144,16 @@ func TestResolveAfterLock_NotReadyWhenMissing(t *testing.T) {
 	}
 }
 
+func TestResolve_MerchantNotFound(t *testing.T) {
+	r, _ := newResolverWithDeps(t, func(o *CheckoutResolverOptions) {
+		o.Merchants = stubMerchantsError(t)
+	})
+	_, err := r.Resolve(context.Background(), "MISSING", tOrder)
+	if !errors.Is(err, ErrOrderNotFound) {
+		t.Fatalf("want ErrOrderNotFound for missing merchant, got %v", err)
+	}
+}
+
 func TestResolveAfterLock_NotReadyWhenSessionMissing(t *testing.T) {
 	repo := newTxStore(t, &domain.Transaction{MerchantID: tMerchant, OrderID: tOrder, Amount: 1}) // no StripeSessionID
 	r := NewCheckoutResolver(CheckoutResolverOptions{Repo: repo.mock}).(*checkoutResolver)

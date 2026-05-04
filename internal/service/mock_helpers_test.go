@@ -256,6 +256,15 @@ func stubMerchants(t *testing.T, shardIdx uint8) *repomock.MockMerchantRepositor
 	return m
 }
 
+// stubMerchantsError returns a MerchantRepository mock that returns ErrMerchantNotFound
+func stubMerchantsError(t *testing.T) *repomock.MockMerchantRepository {
+	t.Helper()
+	m := repomock.NewMockMerchantRepository(gomock.NewController(t))
+	m.EXPECT().GetByMerchantID(gomock.Any(), gomock.Any()).
+		Return(nil, repository.ErrMerchantNotFound).AnyTimes()
+	return m
+}
+
 // successLocker returns a Locker mock whose Acquire always returns a Lock with
 // no-op Release.
 func successLocker(t *testing.T) *cachemock.MockLocker {
