@@ -228,3 +228,57 @@ func TestTokenBucket_AllowHandlesRedisError(t *testing.T) {
 		t.Fatal("expected error on closed redis")
 	}
 }
+
+func TestRateLimiter_MultipleKeys_IndependentLimits(t *testing.T) {
+	rc, _ := rclient(t)
+	rl := NewRateLimiter(rc)
+	ctx := context.Background()
+
+	// Two different keys should have independent limits
+	for i := 0; i < 3; i++ {
+		ok, _, _ := rl.Allow(ctx, "key1", 3, time.Minute)
+		if !ok {
+			t.Fatalf("key1 call %d should be allowed", i)
+		}
+	}
+
+	for i := 0; i < 3; i++ {
+		ok, _, _ := rl.Allow(ctx, "key2", 3, time.Minute)
+		if !ok {
+			t.Fatalf("key2 call %d should be allowed", i)
+		}
+	}
+
+	// Both should now be at limit
+	ok1, _, _ := rl.Allow(ctx, "key1", 3, time.Minute)
+	ok2, _, _ := rl.Allow(ctx, "key2", 3, time.Minute)
+	if ok1 || ok2 {
+		t.Fatal("both keys should be at limit now")
+	}
+}
+
+func TestRateLimiter_RemainingCount(t *testing.T) {
+	rc, _ := rclient(t)
+	rl := NewRateLimiter(rc)
+	ctx := context.Background()
+
+	ok, remaining, err := rl.Allow(ctx, "M1", 5, time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("first call: ok=%v err=%v", ok, err)
+	}
+	// Should have 4 remaining
+	if remaining != 4 {
+		t.Fatalf("remaining: %d, want 4", remaining)
+	}
+
+	// Use 3 more
+	for i := 0; i < 3; i++ {
+		rl.Allow(ctx, "M1", 5, time.Minute)
+	}
+
+	// Check remaining is 0 on 5th call
+	ok2, remaining2, _ := rl.Allow(ctx, "M1", 5, time.Minute)
+	if !ok2 || remaining2 != 0 {
+		t.Fatalf("should allow 5th call, remaining=%d", remaining2)
+	}
+}
