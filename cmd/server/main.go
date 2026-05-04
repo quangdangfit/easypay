@@ -70,7 +70,7 @@ func run() error {
 	defer func() { _ = publisher.Close() }()
 
 	// Repos & cache helpers.
-	orderRepo := repository.NewOrderRepository(router)
+	orderRepo := repository.NewTransactionRepository(router)
 	merchantRepo := repository.NewMerchantRepository(router, cfg.App.LogicalShardCount)
 	rl := cache.NewRateLimiter(rc)
 	locker := cache.NewLocker(rc)

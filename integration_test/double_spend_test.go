@@ -31,7 +31,7 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 	env := SetupEnv(t)
 	defer env.Cleanup(t)
 
-	orderRepo := repository.NewOrderRepository(env.Router)
+	orderRepo := repository.NewTransactionRepository(env.Router)
 	merchantRepo := repository.NewMerchantRepository(env.Router, 16)
 	mock := NewMockStripe()
 
@@ -49,7 +49,7 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 	SeedMerchant(t, env.DB, merchantID, "ms-secret", "")
 
 	t.Run("same event.id replayed concurrently", func(t *testing.T) {
-		seed := SeedOrder(t, orderRepo, merchantID, "DS-1", 1500, domain.OrderStatusPending, func(o *domain.Order) {
+		seed := SeedOrder(t, orderRepo, merchantID, "DS-1", 1500, domain.TransactionStatusPending, func(o *domain.Transaction) {
 			o.StripePaymentIntentID = "pi_ds_1"
 		})
 
@@ -89,13 +89,13 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 		}
 
 		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), 0, seed.MerchantID, seed.OrderID)
-		if o.Status != domain.OrderStatusPaid {
+		if o.Status != domain.TransactionStatusPaid {
 			t.Errorf("status: got %s want paid", o.Status)
 		}
 	})
 
 	t.Run("different event.ids targeting same order converge to paid", func(t *testing.T) {
-		seed := SeedOrder(t, orderRepo, merchantID, "DS-2", 1500, domain.OrderStatusPending, func(o *domain.Order) {
+		seed := SeedOrder(t, orderRepo, merchantID, "DS-2", 1500, domain.TransactionStatusPending, func(o *domain.Transaction) {
 			o.StripePaymentIntentID = "pi_ds_2"
 		})
 
@@ -127,7 +127,7 @@ func TestDoubleSpending_ConcurrentConfirm(t *testing.T) {
 		}
 
 		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), 0, seed.MerchantID, seed.OrderID)
-		if o.Status != domain.OrderStatusPaid {
+		if o.Status != domain.TransactionStatusPaid {
 			t.Fatalf("status: got %s want paid", o.Status)
 		}
 	})

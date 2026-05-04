@@ -72,7 +72,7 @@ type CryptoPayload struct {
 // MySQL UNIQUE on (merchant_id, transaction_id) is the single dedupe layer.
 type paymentService struct {
 	stripe stripe.Client
-	repo   repository.OrderRepository
+	repo   repository.TransactionRepository
 
 	currency       string
 	cryptoContract string
@@ -102,7 +102,7 @@ type PaymentServiceOptions struct {
 	DefaultCancelURL  string
 }
 
-func NewPaymentService(stripeC stripe.Client, repo repository.OrderRepository, opts PaymentServiceOptions) Payments {
+func NewPaymentService(stripeC stripe.Client, repo repository.TransactionRepository, opts PaymentServiceOptions) Payments {
 	ttl := opts.CheckoutTokenTTL
 	if ttl == 0 {
 		ttl = 24 * time.Hour
@@ -140,18 +140,18 @@ func (s *paymentService) Create(ctx context.Context, in CreatePaymentInput) (*Cr
 
 	txnID := DeriveTransactionID(in.Merchant.MerchantID, in.OrderID)
 
-	row := &domain.Order{
+	row := &domain.Transaction{
 		MerchantID:    in.Merchant.MerchantID,
 		TransactionID: txnID,
 		OrderID:       in.OrderID,
 		Amount:        in.Amount,
 		Currency:      normalizedCurrency,
-		Status:        domain.OrderStatusCreated,
+		Status:        domain.TransactionStatusCreated,
 		PaymentMethod: requestedMethod,
 		ShardIndex:    in.Merchant.ShardIndex,
 	}
 	if err := s.repo.Insert(ctx, row); err != nil {
-		if !errors.Is(err, repository.ErrDuplicateOrder) {
+		if !errors.Is(err, repository.ErrDuplicateTransaction) {
 			return nil, fmt.Errorf("insert order: %w", err)
 		}
 		// Loser of the (merchant_id, transaction_id) UNIQUE race. Find the
@@ -263,7 +263,7 @@ func (s *paymentService) lazyCheckoutURL(merchantID, orderID string) string {
 // the persisted order. ClientSecret cannot be recovered (Stripe only emits
 // it at session creation), so embedded-checkout retries fall back to the
 // hosted URL.
-func (s *paymentService) reconstructResult(merchantID string, o *domain.Order) *CreatePaymentResult {
+func (s *paymentService) reconstructResult(merchantID string, o *domain.Transaction) *CreatePaymentResult {
 	res := &CreatePaymentResult{
 		OrderID:               o.OrderID,
 		TransactionID:         o.TransactionID,
@@ -294,7 +294,7 @@ func (s *paymentService) reconstructResult(merchantID string, o *domain.Order) *
 // incoming request on the fields that define a payment's identity. We
 // intentionally do NOT compare cosmetic fields (success_url, cancel_url,
 // customer_email) — those may legitimately drift across retries.
-func sameMaterialPayment(existing *domain.Order, amount int64, currency, method string) bool {
+func sameMaterialPayment(existing *domain.Transaction, amount int64, currency, method string) bool {
 	if existing.Amount != amount {
 		return false
 	}

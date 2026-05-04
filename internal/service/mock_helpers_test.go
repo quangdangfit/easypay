@@ -19,25 +19,25 @@ import (
 	"github.com/quangdangfit/easypay/internal/repository"
 )
 
-// orderStore wires a MockOrderRepository whose behaviour is backed by an
-// in-memory map. Tests can reach into orderStore.byID to seed and assert.
+// txStore wires a MockTransactionRepository whose behaviour is backed by an
+// in-memory map. Tests can reach into txStore.byID to seed and assert.
 //
 // Insert is the single write path; on duplicate (merchant_id,
-// transaction_id) it returns repository.ErrDuplicateOrder so the service's
+// transaction_id) it returns repository.ErrDuplicateTransaction so the service's
 // idempotent fallback to GetByTransactionID kicks in.
-type orderStore struct {
+type txStore struct {
 	mu              sync.Mutex
-	byID            map[string]*domain.Order // keyed by order_id
-	byTxn           map[string]*domain.Order // keyed by merchant_id+":"+transaction_id
-	pending         []*domain.Order
+	byID            map[string]*domain.Transaction // keyed by order_id
+	byTxn           map[string]*domain.Transaction // keyed by merchant_id+":"+transaction_id
+	pending         []*domain.Transaction
 	updateCheckouts int
-	mock            *repomock.MockOrderRepository
+	mock            *repomock.MockTransactionRepository
 }
 
 // cloneOrder returns a shallow copy so callers never share pointers with
 // the in-memory map, matching the deserialize-per-read behaviour of the
 // real MySQL repo.
-func cloneOrder(o *domain.Order) *domain.Order {
+func cloneOrder(o *domain.Transaction) *domain.Transaction {
 	if o == nil {
 		return nil
 	}
@@ -45,38 +45,38 @@ func cloneOrder(o *domain.Order) *domain.Order {
 	return &cp
 }
 
-func (s *orderStore) lookupByID(id string) (*domain.Order, bool) {
+func (s *txStore) lookupByID(id string) (*domain.Transaction, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	o, ok := s.byID[id]
 	return cloneOrder(o), ok
 }
 
-func (s *orderStore) lookupByTxn(key string) (*domain.Order, bool) {
+func (s *txStore) lookupByTxn(key string) (*domain.Transaction, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	o, ok := s.byTxn[key]
 	return cloneOrder(o), ok
 }
 
-func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
+func newTxStore(t *testing.T, seed ...*domain.Transaction) *txStore {
 	t.Helper()
-	s := &orderStore{
-		byID:  map[string]*domain.Order{},
-		byTxn: map[string]*domain.Order{},
+	s := &txStore{
+		byID:  map[string]*domain.Transaction{},
+		byTxn: map[string]*domain.Transaction{},
 	}
 	for _, o := range seed {
 		s.byID[o.MerchantID+":"+o.OrderID] = o
 		s.byTxn[o.MerchantID+":"+o.TransactionID] = o
 	}
-	s.mock = repomock.NewMockOrderRepository(gomock.NewController(t))
+	s.mock = repomock.NewMockTransactionRepository(gomock.NewController(t))
 	s.mock.EXPECT().Insert(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, o *domain.Order) error {
+		DoAndReturn(func(_ context.Context, o *domain.Transaction) error {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			key := o.MerchantID + ":" + o.TransactionID
 			if _, ok := s.byTxn[key]; ok {
-				return repository.ErrDuplicateOrder
+				return repository.ErrDuplicateTransaction
 			}
 			// Store a clone so the caller's pointer doesn't alias what the
 			// store returns to other goroutines.
@@ -86,21 +86,21 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 			return nil
 		}).AnyTimes()
 	s.mock.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ uint8, merchantID, orderID string) (*domain.Order, error) {
+		DoAndReturn(func(_ context.Context, _ uint8, merchantID, orderID string) (*domain.Transaction, error) {
 			if o, ok := s.lookupByID(merchantID + ":" + orderID); ok {
 				return o, nil
 			}
 			return nil, repository.ErrNotFound
 		}).AnyTimes()
 	s.mock.EXPECT().GetByTransactionID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ uint8, merchantID, txnID string) (*domain.Order, error) {
+		DoAndReturn(func(_ context.Context, _ uint8, merchantID, txnID string) (*domain.Transaction, error) {
 			if o, ok := s.lookupByTxn(merchantID + ":" + txnID); ok {
 				return o, nil
 			}
 			return nil, repository.ErrNotFound
 		}).AnyTimes()
 	s.mock.EXPECT().GetByPaymentIntentID(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, pi string) (*domain.Order, error) {
+		DoAndReturn(func(_ context.Context, pi string) (*domain.Transaction, error) {
 			if pi == "" {
 				return nil, repository.ErrNotFound
 			}
@@ -114,7 +114,7 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 			return nil, repository.ErrNotFound
 		}).AnyTimes()
 	s.mock.EXPECT().UpdateStatus(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ uint8, merchantID, orderID string, st domain.OrderStatus, pi string) error {
+		DoAndReturn(func(_ context.Context, _ uint8, merchantID, orderID string, st domain.TransactionStatus, pi string) error {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			o, ok := s.byID[merchantID+":"+orderID]
@@ -145,7 +145,7 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 			return nil
 		}).AnyTimes()
 	s.mock.EXPECT().GetPendingBefore(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ time.Time, _ int) ([]*domain.Order, error) {
+		DoAndReturn(func(_ context.Context, _ time.Time, _ int) ([]*domain.Transaction, error) {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			return s.pending, nil

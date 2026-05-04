@@ -12,10 +12,10 @@ import (
 )
 
 type PaymentStatusHandler struct {
-	repo repository.OrderRepository
+	repo repository.TransactionRepository
 }
 
-func NewPaymentStatusHandler(repo repository.OrderRepository) *PaymentStatusHandler {
+func NewPaymentStatusHandler(repo repository.TransactionRepository) *PaymentStatusHandler {
 	return &PaymentStatusHandler{repo: repo}
 }
 
@@ -74,7 +74,7 @@ func (h *PaymentStatusHandler) Get(c *fiber.Ctx) error {
 // checkoutURLFor reconstructs a Stripe Checkout URL from the order's
 // session_id. Returns "" when no Stripe session has been created yet (e.g.
 // lazy-mode orders the user hasn't opened).
-func checkoutURLFor(o *domain.Order) string {
+func checkoutURLFor(o *domain.Transaction) string {
 	if o.StripeSessionID == "" {
 		return ""
 	}

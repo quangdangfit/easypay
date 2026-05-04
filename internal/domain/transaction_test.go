@@ -22,17 +22,17 @@ func TestOnchainAndMerchantSmoke(t *testing.T) {
 	}
 }
 
-func TestOrderStatus_Valid(t *testing.T) {
-	valid := []OrderStatus{
-		OrderStatusCreated, OrderStatusPending, OrderStatusPaid,
-		OrderStatusFailed, OrderStatusExpired, OrderStatusRefunded,
+func TestTransactionStatus_Valid(t *testing.T) {
+	valid := []TransactionStatus{
+		TransactionStatusCreated, TransactionStatusPending, TransactionStatusPaid,
+		TransactionStatusFailed, TransactionStatusExpired, TransactionStatusRefunded,
 	}
 	for _, s := range valid {
 		if !s.Valid() {
 			t.Errorf("expected %q valid", s)
 		}
 	}
-	for _, s := range []OrderStatus{"", "unknown", "PAID"} {
+	for _, s := range []TransactionStatus{"", "unknown", "PAID"} {
 		if s.Valid() {
 			t.Errorf("expected %q invalid", s)
 		}

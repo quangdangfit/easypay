@@ -30,7 +30,7 @@ import (
 //  5. Stripe call (already wrapped by circuit breaker).
 type checkoutResolver struct {
 	stripe            stripe.Client
-	repo              repository.OrderRepository
+	repo              repository.TransactionRepository
 	merchants         repository.MerchantRepository
 	locker            cache.Locker
 	urlCache          cache.URLCache
@@ -41,7 +41,7 @@ type checkoutResolver struct {
 
 type CheckoutResolverOptions struct {
 	Stripe stripe.Client
-	Repo   repository.OrderRepository
+	Repo   repository.TransactionRepository
 	// Merchants resolves merchant_id → shard_index for routing the
 	// transactions-table calls. The /pay/:merchant_id/:order_id endpoint
 	// is unauthenticated, so we don't have a *domain.Merchant on hand —
@@ -204,7 +204,7 @@ func (r *checkoutResolver) resolveAfterLock(ctx context.Context, shardIdx uint8,
 	return "", ErrOrderNotReady
 }
 
-func (r *checkoutResolver) createSession(ctx context.Context, order *domain.Order) (*stripe.CheckoutSession, error) {
+func (r *checkoutResolver) createSession(ctx context.Context, order *domain.Transaction) (*stripe.CheckoutSession, error) {
 	if order == nil {
 		return nil, ErrOrderNotReady
 	}

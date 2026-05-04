@@ -10,10 +10,10 @@ import (
 	"github.com/quangdangfit/easypay/internal/domain"
 )
 
-func newSvc(t *testing.T) (Payments, *stripeStub, *orderStore) {
+func newSvc(t *testing.T) (Payments, *stripeStub, *txStore) {
 	t.Helper()
 	stripeC := newStripeStub(t)
-	store := newOrderStore(t)
+	store := newTxStore(t)
 	svc := NewPaymentService(stripeC.mock, store.mock, PaymentServiceOptions{
 		DefaultCurrency: "USD",
 		CryptoContract:  "0xCONTRACT",
@@ -93,7 +93,7 @@ func TestCreate_CryptoPath(t *testing.T) {
 
 func TestCreate_LazyCheckoutDoesNotHitStripe(t *testing.T) {
 	stripeC := newStripeStub(t)
-	store := newOrderStore(t)
+	store := newTxStore(t)
 	svc := NewPaymentService(stripeC.mock, store.mock, PaymentServiceOptions{
 		DefaultCurrency: "USD",
 		LazyCheckout:    true,
@@ -123,7 +123,7 @@ func TestCreate_LazyCheckoutDoesNotHitStripe(t *testing.T) {
 
 func TestCreate_LazyWithoutSecretSkipsToken(t *testing.T) {
 	stripeC := newStripeStub(t)
-	store := newOrderStore(t)
+	store := newTxStore(t)
 	svc := NewPaymentService(stripeC.mock, store.mock, PaymentServiceOptions{
 		DefaultCurrency: "USD",
 		LazyCheckout:    true,

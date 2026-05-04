@@ -65,19 +65,19 @@ CREATE TABLE b (id INT);
 	}
 }
 
-// scanOrder error path — pass a row that's been closed to force a scan error.
-func TestScanOrder_ScanError(t *testing.T) {
+// scanTransaction error path — pass a row that's been closed to force a scan error.
+func TestScanTransaction_ScanError(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer func() { _ = db.Close() }()
 	mock.ExpectQuery("SELECT").WillReturnRows(
 		sqlmock.NewRows([]string{"id"}).AddRow(int64(1)), // wrong column count
 	)
 	row := db.QueryRow("SELECT id FROM x")
-	_, err := scanOrder(row)
+	_, err := scanTransaction(row)
 	if err == nil {
 		t.Fatal("expected scan error")
 	}
-	// Either wrap message ("scan order") or driver-level ("Scan").
+	// Either wrap message ("scan transaction") or driver-level ("Scan").
 	if !strings.Contains(err.Error(), "scan") && !strings.Contains(err.Error(), "Scan") {
 		t.Logf("unusual error string: %v", err)
 	}

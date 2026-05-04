@@ -19,7 +19,7 @@ import (
 // outages.
 // orderReconciliation implements Reconciler.
 type orderReconciliation struct {
-	Orders    repository.OrderRepository
+	Orders    repository.TransactionRepository
 	Stripe    stripe.Client
 	Publisher kafka.EventPublisher
 
@@ -36,11 +36,11 @@ type ReconciliationOptions struct {
 	BatchSize  int
 }
 
-func NewOrderReconciliation(orders repository.OrderRepository, s stripe.Client, p kafka.EventPublisher) Reconciler {
+func NewOrderReconciliation(orders repository.TransactionRepository, s stripe.Client, p kafka.EventPublisher) Reconciler {
 	return NewOrderReconciliationWithOptions(orders, s, p, ReconciliationOptions{})
 }
 
-func NewOrderReconciliationWithOptions(orders repository.OrderRepository, s stripe.Client, p kafka.EventPublisher, opts ReconciliationOptions) Reconciler {
+func NewOrderReconciliationWithOptions(orders repository.TransactionRepository, s stripe.Client, p kafka.EventPublisher, opts ReconciliationOptions) Reconciler {
 	r := &orderReconciliation{
 		Orders: orders, Stripe: s, Publisher: p,
 		Interval:   opts.Interval,
@@ -87,7 +87,7 @@ func (r *orderReconciliation) tick(ctx context.Context) error {
 	return nil
 }
 
-func (r *orderReconciliation) reconcileOne(ctx context.Context, o *domain.Order) {
+func (r *orderReconciliation) reconcileOne(ctx context.Context, o *domain.Transaction) {
 	log := logger.L().With("order_id", o.OrderID, "merchant_id", o.MerchantID)
 	if o.StripePaymentIntentID == "" {
 		// Crypto orders are reconciled by the blockchain Reconciler; nothing
@@ -101,14 +101,14 @@ func (r *orderReconciliation) reconcileOne(ctx context.Context, o *domain.Order)
 	}
 	switch pi.Status {
 	case "succeeded":
-		if err := r.Orders.UpdateStatus(ctx, o.ShardIndex, o.MerchantID, o.OrderID, domain.OrderStatusPaid, pi.ID); err != nil {
+		if err := r.Orders.UpdateStatus(ctx, o.ShardIndex, o.MerchantID, o.OrderID, domain.TransactionStatusPaid, pi.ID); err != nil {
 			log.Warn("force confirm failed", "err", err)
 			return
 		}
 		_ = r.Publisher.PublishPaymentConfirmed(ctx, kafka.PaymentConfirmedEvent{
 			OrderID:               o.OrderID,
 			MerchantID:            o.MerchantID,
-			Status:                string(domain.OrderStatusPaid),
+			Status:                string(domain.TransactionStatusPaid),
 			StripePaymentIntentID: pi.ID,
 			Amount:                o.Amount,
 			Currency:              o.Currency,
@@ -116,6 +116,6 @@ func (r *orderReconciliation) reconcileOne(ctx context.Context, o *domain.Order)
 		})
 		log.Info("force-confirmed via reconciliation")
 	case "canceled", "requires_payment_method":
-		_ = r.Orders.UpdateStatus(ctx, o.ShardIndex, o.MerchantID, o.OrderID, domain.OrderStatusFailed, pi.ID)
+		_ = r.Orders.UpdateStatus(ctx, o.ShardIndex, o.MerchantID, o.OrderID, domain.TransactionStatusFailed, pi.ID)
 	}
 }

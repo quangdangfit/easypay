@@ -26,38 +26,38 @@ const (
 	statusRefunded uint8 = 5
 )
 
-func encodeStatus(s domain.OrderStatus) (uint8, error) {
+func encodeStatus(s domain.TransactionStatus) (uint8, error) {
 	switch s {
-	case domain.OrderStatusCreated:
+	case domain.TransactionStatusCreated:
 		return statusCreated, nil
-	case domain.OrderStatusPending:
+	case domain.TransactionStatusPending:
 		return statusPending, nil
-	case domain.OrderStatusPaid:
+	case domain.TransactionStatusPaid:
 		return statusPaid, nil
-	case domain.OrderStatusFailed:
+	case domain.TransactionStatusFailed:
 		return statusFailed, nil
-	case domain.OrderStatusExpired:
+	case domain.TransactionStatusExpired:
 		return statusExpired, nil
-	case domain.OrderStatusRefunded:
+	case domain.TransactionStatusRefunded:
 		return statusRefunded, nil
 	}
 	return 0, fmt.Errorf("encode status: unknown %q", s)
 }
 
-func decodeStatus(v uint8) (domain.OrderStatus, error) {
+func decodeStatus(v uint8) (domain.TransactionStatus, error) {
 	switch v {
 	case statusCreated:
-		return domain.OrderStatusCreated, nil
+		return domain.TransactionStatusCreated, nil
 	case statusPending:
-		return domain.OrderStatusPending, nil
+		return domain.TransactionStatusPending, nil
 	case statusPaid:
-		return domain.OrderStatusPaid, nil
+		return domain.TransactionStatusPaid, nil
 	case statusFailed:
-		return domain.OrderStatusFailed, nil
+		return domain.TransactionStatusFailed, nil
 	case statusExpired:
-		return domain.OrderStatusExpired, nil
+		return domain.TransactionStatusExpired, nil
 	case statusRefunded:
-		return domain.OrderStatusRefunded, nil
+		return domain.TransactionStatusRefunded, nil
 	}
 	return "", fmt.Errorf("decode status: unknown %d", v)
 }

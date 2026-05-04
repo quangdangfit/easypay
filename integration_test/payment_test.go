@@ -22,7 +22,7 @@ func TestCreateOrder_HappyPath(t *testing.T) {
 	defer env.Cleanup(t)
 
 	stripeMock := NewMockStripe()
-	orderRepo := repository.NewOrderRepository(env.Router)
+	orderRepo := repository.NewTransactionRepository(env.Router)
 
 	svc := service.NewPaymentService(stripeMock, orderRepo, service.PaymentServiceOptions{
 		DefaultCurrency: "USD",
@@ -64,7 +64,7 @@ func TestIdempotency_DuplicateOrder(t *testing.T) {
 	defer env.Cleanup(t)
 
 	stripeMock := NewMockStripe()
-	orderRepo := repository.NewOrderRepository(env.Router)
+	orderRepo := repository.NewTransactionRepository(env.Router)
 
 	svc := service.NewPaymentService(stripeMock, orderRepo, service.PaymentServiceOptions{
 		DefaultCurrency: "USD",
@@ -105,7 +105,7 @@ func TestConcurrentCreate_Real(t *testing.T) {
 	defer env.Cleanup(t)
 
 	stripeMock := NewMockStripe()
-	orderRepo := repository.NewOrderRepository(env.Router)
+	orderRepo := repository.NewTransactionRepository(env.Router)
 
 	svc := service.NewPaymentService(stripeMock, orderRepo, service.PaymentServiceOptions{
 		DefaultCurrency: "USD",
@@ -156,7 +156,7 @@ func TestConcurrentCreate_Real(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read winner row: %v", err)
 	}
-	if got.Status != domain.OrderStatusCreated {
+	if got.Status != domain.TransactionStatusCreated {
 		t.Fatalf("status: got %s want created", got.Status)
 	}
 }

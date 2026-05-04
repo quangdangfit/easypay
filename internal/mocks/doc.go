@@ -5,7 +5,7 @@
 // Regenerate with `make mocks` (or `go generate ./internal/mocks/`).
 package mocks
 
-//go:generate mockgen -source=../repository/order_repo.go -destination=repo/mock_order_repo.go -package=repomock
+//go:generate mockgen -source=../repository/transaction_repo.go -destination=repo/mock_transaction_repo.go -package=repomock
 //go:generate mockgen -source=../repository/merchant_repo.go -destination=repo/mock_merchant_repo.go -package=repomock
 //go:generate mockgen -source=../repository/onchain_tx_repo.go -destination=repo/mock_onchain_tx_repo.go -package=repomock
 

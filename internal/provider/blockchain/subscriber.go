@@ -24,13 +24,14 @@ type Subscriber struct {
 	Cfg        ChainConfig
 	Cursor     CursorStore
 	PendingTxs repository.OnchainTxRepository
+	Orders     repository.TransactionRepository
 	BackoffMin time.Duration
 	BackoffMax time.Duration
 }
 
-func NewSubscriber(c ChainClient, cfg ChainConfig, cur CursorStore, repo repository.OnchainTxRepository) *Subscriber {
+func NewSubscriber(c ChainClient, cfg ChainConfig, cur CursorStore, repo repository.OnchainTxRepository, orders repository.TransactionRepository) *Subscriber {
 	return &Subscriber{
-		Client: c, Cfg: cfg, Cursor: cur, PendingTxs: repo,
+		Client: c, Cfg: cfg, Cursor: cur, PendingTxs: repo, Orders: orders,
 		BackoffMin: time.Second,
 		BackoffMax: 30 * time.Second,
 	}
@@ -100,9 +101,23 @@ func (s *Subscriber) handleLog(ctx context.Context, lg types.Log) error {
 	if err != nil {
 		return fmt.Errorf("parse event: %w", err)
 	}
+	// Resolve merchant_id from the matching transactions row. The crypto
+	// payment flow always pre-creates a transactions row before returning
+	// the contract address to the merchant, so a missing row here means
+	// either a misconfiguration or a payment for an unknown order — drop it.
+	order, err := s.Orders.GetByOrderIDAny(ctx, parsed.OrderID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			logger.L().Warn("on-chain event for unknown order_id, dropping",
+				"tx", hash, "order_id", parsed.OrderID)
+			return nil
+		}
+		return fmt.Errorf("resolve merchant: %w", err)
+	}
 	tx := &domain.OnchainTransaction{
 		TxHash:          hash,
 		BlockNumber:     lg.BlockNumber,
+		MerchantID:      order.MerchantID,
 		OrderID:         parsed.OrderID,
 		Payer:           parsed.Payer.Hex(),
 		Token:           parsed.Token.Hex(),

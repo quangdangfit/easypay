@@ -3,19 +3,18 @@ package repository
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/quangdangfit/easypay/internal/domain"
 )
 
 func TestEncodeDecodeStatus_Roundtrip(t *testing.T) {
-	all := []domain.OrderStatus{
-		domain.OrderStatusCreated,
-		domain.OrderStatusPending,
-		domain.OrderStatusPaid,
-		domain.OrderStatusFailed,
-		domain.OrderStatusExpired,
-		domain.OrderStatusRefunded,
+	all := []domain.TransactionStatus{
+		domain.TransactionStatusCreated,
+		domain.TransactionStatusPending,
+		domain.TransactionStatusPaid,
+		domain.TransactionStatusFailed,
+		domain.TransactionStatusExpired,
+		domain.TransactionStatusRefunded,
 	}
 	for _, s := range all {
 		code, err := encodeStatus(s)
@@ -33,7 +32,7 @@ func TestEncodeDecodeStatus_Roundtrip(t *testing.T) {
 }
 
 func TestEncodeStatus_Unknown(t *testing.T) {
-	if _, err := encodeStatus(domain.OrderStatus("nope")); err == nil {
+	if _, err := encodeStatus(domain.TransactionStatus("nope")); err == nil {
 		t.Fatal("expected error for unknown status")
 	}
 }
@@ -129,23 +128,6 @@ func TestDecodeHex16(t *testing.T) {
 	}
 	if _, err := decodeHex16(strings.Repeat("g", 32)); err == nil {
 		t.Fatal("want hex decode error")
-	}
-}
-
-func TestUnixToU32_Clamps(t *testing.T) {
-	// time.Time{} has Unix() ≈ -6.2e10; must clamp to 0.
-	if got := unixToU32(time.Time{}); got != 0 {
-		t.Fatalf("zero time did not clamp: %d", got)
-	}
-	// 2200-01-01 is past the uint32 boundary; must clamp to max uint32.
-	far := time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC)
-	if got := unixToU32(far); got != ^uint32(0) {
-		t.Fatalf("far future did not clamp to max: %d", got)
-	}
-	// Sanity: a normal time round-trips.
-	now := time.Unix(1_700_000_000, 0).UTC()
-	if got := unixToU32(now); got != 1_700_000_000 {
-		t.Fatalf("normal time mangled: %d", got)
 	}
 }
 

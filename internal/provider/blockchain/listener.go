@@ -29,12 +29,12 @@ func NewListener(
 	cfg ChainConfig,
 	cursor CursorStore,
 	pendingTxs repository.OnchainTxRepository,
-	orders repository.OrderRepository,
+	orders repository.TransactionRepository,
 	publisher kafka.EventPublisher,
 ) *Listener {
 	return &Listener{
-		Subscriber:   NewSubscriber(c, cfg, cursor, pendingTxs),
-		Backfill:     NewBackfillScanner(c, cfg, cursor, pendingTxs),
+		Subscriber:   NewSubscriber(c, cfg, cursor, pendingTxs, orders),
+		Backfill:     NewBackfillScanner(c, cfg, cursor, pendingTxs, orders),
 		Confirmation: NewConfirmationTracker(c, cfg, pendingTxs, orders, publisher),
 		Reconciler:   NewReconciler(c, cfg, pendingTxs),
 	}

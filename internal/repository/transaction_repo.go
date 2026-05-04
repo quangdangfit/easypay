@@ -13,27 +13,29 @@ import (
 )
 
 // ErrNotFound is returned by all read paths when a row doesn't exist.
-var ErrNotFound = errors.New("order not found")
+var ErrNotFound = errors.New("transaction not found")
 
-// ErrDuplicateOrder is returned by Insert when a row with the same
-// (merchant_id, transaction_id) — equivalently (merchant_id, order_id) —
-// already exists. Callers rely on this to implement sync-write idempotency:
-// on duplicate, they fetch the existing row via GetByTransactionID and
-// return its already-derived response.
-var ErrDuplicateOrder = errors.New("duplicate order (merchant_id, transaction_id)")
+// ErrDuplicateTransaction is returned by Insert when a row with the same
+// transaction_id already exists. Because transaction_id is derived
+// deterministically from sha256(merchant_id || ':' || order_id)[:16],
+// retries with the same (merchant_id, order_id) collapse onto the same
+// row via the UNIQUE on transaction_id. Callers rely on this to implement
+// sync-write idempotency: on duplicate, they fetch the existing row via
+// GetByTransactionID and return its already-derived response.
+var ErrDuplicateTransaction = errors.New("duplicate transaction (transaction_id)")
 
-// OrderRepository is the port the service layer depends on. It speaks to
-// the `transactions` table. Methods that have a merchant context take the
-// merchant's logical shard index and route via ShardRouter.For; the few
-// global lookups (GetByOrderIDAny, GetByPaymentIntentID, GetPendingBefore)
-// scatter-gather across every physical pool.
-type OrderRepository interface {
-	// Insert routes via o.ShardIndex. Callers MUST set o.ShardIndex before
+// TransactionRepository is the port the service layer depends on. It speaks
+// to the `transactions` table. Methods that have a merchant context take
+// the merchant's logical shard index and route via ShardRouter.For; the
+// few global lookups (GetByOrderIDAny, GetByPaymentIntentID,
+// GetPendingBefore) scatter-gather across every physical pool.
+type TransactionRepository interface {
+	// Insert routes via t.ShardIndex. Callers MUST set t.ShardIndex before
 	// calling — the field is copied from merchant.ShardIndex.
-	Insert(ctx context.Context, o *domain.Order) error
-	GetByTransactionID(ctx context.Context, shardIdx uint8, merchantID, transactionID string) (*domain.Order, error)
-	GetByMerchantOrderID(ctx context.Context, shardIdx uint8, merchantID, orderID string) (*domain.Order, error)
-	UpdateStatus(ctx context.Context, shardIdx uint8, merchantID, orderID string, status domain.OrderStatus, stripePaymentIntentID string) error
+	Insert(ctx context.Context, t *domain.Transaction) error
+	GetByTransactionID(ctx context.Context, shardIdx uint8, merchantID, transactionID string) (*domain.Transaction, error)
+	GetByMerchantOrderID(ctx context.Context, shardIdx uint8, merchantID, orderID string) (*domain.Transaction, error)
+	UpdateStatus(ctx context.Context, shardIdx uint8, merchantID, orderID string, status domain.TransactionStatus, stripePaymentIntentID string) error
 	UpdateCheckout(ctx context.Context, shardIdx uint8, merchantID, orderID, stripeSessionID, stripePaymentIntentID string) error
 	// GetByOrderIDAny is a global lookup keyed only on order_id. Used by the
 	// blockchain confirmation path, which doesn't know merchant_id ahead of
@@ -41,24 +43,24 @@ type OrderRepository interface {
 	// across every physical shard and returns the first match. Merchants
 	// that route on-chain payments should use globally unique order_ids
 	// (UUID/ULID) to avoid collisions across their own merchant_id.
-	GetByOrderIDAny(ctx context.Context, orderID string) (*domain.Order, error)
+	GetByOrderIDAny(ctx context.Context, orderID string) (*domain.Transaction, error)
 	// GetByPaymentIntentID looks up by Stripe PI id across every physical
 	// shard. Used on the refund recovery path when a Stripe charge.refunded
 	// event lacks our metadata.
-	GetByPaymentIntentID(ctx context.Context, pi string) (*domain.Order, error)
-	// GetPendingBefore scans every physical shard for stuck orders. Returned
-	// rows carry their physical-pool shard index so follow-up writes can
-	// route deterministically.
-	GetPendingBefore(ctx context.Context, before time.Time, limit int) ([]*domain.Order, error)
+	GetByPaymentIntentID(ctx context.Context, pi string) (*domain.Transaction, error)
+	// GetPendingBefore scans every physical shard for stuck transactions.
+	// Returned rows carry their physical-pool shard index so follow-up
+	// writes can route deterministically.
+	GetPendingBefore(ctx context.Context, before time.Time, limit int) ([]*domain.Transaction, error)
 }
 
-type orderRepo struct {
+type transactionRepo struct {
 	router ShardRouter
 }
 
-// NewOrderRepository constructs an OrderRepository over a ShardRouter.
-func NewOrderRepository(router ShardRouter) OrderRepository {
-	return &orderRepo{router: router}
+// NewTransactionRepository constructs a TransactionRepository over a ShardRouter.
+func NewTransactionRepository(router ShardRouter) TransactionRepository {
+	return &transactionRepo{router: router}
 }
 
 const insertCols = "(merchant_id, transaction_id, order_id, amount, currency_code, status, payment_method, stripe_pi_id, stripe_session, created_at, updated_at)"
@@ -67,60 +69,58 @@ const insertPlaceholders = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 
 const selectCols = "merchant_id, transaction_id, order_id, amount, currency_code, status, payment_method, stripe_pi_id, stripe_session, created_at, updated_at"
 
-func (r *orderRepo) Insert(ctx context.Context, o *domain.Order) error {
-	merch := []byte(o.MerchantID)
+func (r *transactionRepo) Insert(ctx context.Context, t *domain.Transaction) error {
+	merch := []byte(t.MerchantID)
 	if len(merch) > 16 {
 		return fmt.Errorf("merchant_id too long: %d bytes (max 16)", len(merch))
 	}
-	txn, err := decodeHex16(o.TransactionID)
+	txn, err := decodeHex16(t.TransactionID)
 	if err != nil {
 		return fmt.Errorf("transaction_id: %w", err)
 	}
-	if err := domain.ValidateOrderID(o.OrderID); err != nil {
+	if err := domain.ValidateOrderID(t.OrderID); err != nil {
 		return fmt.Errorf("order_id: %w", err)
 	}
-	if o.Amount < 0 {
-		return fmt.Errorf("amount must be >= 0, got %d", o.Amount)
+	if t.Amount < 0 {
+		return fmt.Errorf("amount must be >= 0, got %d", t.Amount)
 	}
-	cur, err := encodeCurrency(o.Currency)
+	cur, err := encodeCurrency(t.Currency)
 	if err != nil {
 		return err
 	}
-	st, err := encodeStatus(o.Status)
+	st, err := encodeStatus(t.Status)
 	if err != nil {
 		return err
 	}
-	pm := encodeMethod(o.PaymentMethod)
+	pm := encodeMethod(t.PaymentMethod)
 
 	now := time.Now().UTC()
-	if o.CreatedAt.IsZero() {
-		o.CreatedAt = now
+	if t.CreatedAt.IsZero() {
+		t.CreatedAt = now
 	}
-	o.UpdatedAt = now
-	createdSec := unixToU32(o.CreatedAt)
-	updatedSec := unixToU32(o.UpdatedAt)
+	t.UpdatedAt = now
 
-	db, err := r.router.For(o.ShardIndex)
+	db, err := r.router.For(t.ShardIndex)
 	if err != nil {
 		return fmt.Errorf("route: %w", err)
 	}
 
 	q := "INSERT INTO transactions " + insertCols + " VALUES " + insertPlaceholders
 	_, err = db.ExecContext(ctx, q,
-		merch, txn, o.OrderID, uint64(o.Amount), cur, st, pm,
-		nullBytes(o.StripePaymentIntentID), nullBytes(o.StripeSessionID),
-		createdSec, updatedSec,
+		merch, txn, t.OrderID, uint64(t.Amount), cur, st, pm,
+		nullBytes(t.StripePaymentIntentID), nullBytes(t.StripeSessionID),
+		t.CreatedAt, t.UpdatedAt,
 	)
 	if err != nil {
 		if isDuplicateKeyErr(err) {
-			return ErrDuplicateOrder
+			return ErrDuplicateTransaction
 		}
-		return fmt.Errorf("insert order: %w", err)
+		return fmt.Errorf("insert transaction: %w", err)
 	}
 	return nil
 }
 
-func (r *orderRepo) GetByTransactionID(ctx context.Context, shardIdx uint8, merchantID, transactionID string) (*domain.Order, error) {
+func (r *transactionRepo) GetByTransactionID(ctx context.Context, shardIdx uint8, merchantID, transactionID string) (*domain.Transaction, error) {
 	db, err := r.router.For(shardIdx)
 	if err != nil {
 		return nil, fmt.Errorf("route: %w", err)
@@ -132,15 +132,15 @@ func (r *orderRepo) GetByTransactionID(ctx context.Context, shardIdx uint8, merc
 	}
 	q := "SELECT " + selectCols + " FROM transactions WHERE merchant_id = ? AND transaction_id = ? LIMIT 1"
 	row := db.QueryRowContext(ctx, q, merch, txn)
-	o, err := scanOrder(row)
+	t, err := scanTransaction(row)
 	if err != nil {
 		return nil, err
 	}
-	o.ShardIndex = shardIdx
-	return o, nil
+	t.ShardIndex = shardIdx
+	return t, nil
 }
 
-func (r *orderRepo) GetByMerchantOrderID(ctx context.Context, shardIdx uint8, merchantID, orderID string) (*domain.Order, error) {
+func (r *transactionRepo) GetByMerchantOrderID(ctx context.Context, shardIdx uint8, merchantID, orderID string) (*domain.Transaction, error) {
 	if err := domain.ValidateOrderID(orderID); err != nil {
 		return nil, err
 	}
@@ -151,15 +151,15 @@ func (r *orderRepo) GetByMerchantOrderID(ctx context.Context, shardIdx uint8, me
 	merch := []byte(merchantID)
 	q := "SELECT " + selectCols + " FROM transactions WHERE merchant_id = ? AND order_id = ? LIMIT 1"
 	row := db.QueryRowContext(ctx, q, merch, orderID)
-	o, err := scanOrder(row)
+	t, err := scanTransaction(row)
 	if err != nil {
 		return nil, err
 	}
-	o.ShardIndex = shardIdx
-	return o, nil
+	t.ShardIndex = shardIdx
+	return t, nil
 }
 
-func (r *orderRepo) GetByOrderIDAny(ctx context.Context, orderID string) (*domain.Order, error) {
+func (r *transactionRepo) GetByOrderIDAny(ctx context.Context, orderID string) (*domain.Transaction, error) {
 	if err := domain.ValidateOrderID(orderID); err != nil {
 		return nil, err
 	}
@@ -170,7 +170,7 @@ func (r *orderRepo) GetByOrderIDAny(ctx context.Context, orderID string) (*domai
 // GetByPaymentIntentID looks up by Stripe PI id across every physical
 // shard. Used on the refund recovery path when a Stripe charge.refunded
 // event lacks our metadata. Indexed by idx_pi_id on each shard.
-func (r *orderRepo) GetByPaymentIntentID(ctx context.Context, pi string) (*domain.Order, error) {
+func (r *transactionRepo) GetByPaymentIntentID(ctx context.Context, pi string) (*domain.Transaction, error) {
 	if pi == "" {
 		return nil, ErrNotFound
 	}
@@ -180,26 +180,26 @@ func (r *orderRepo) GetByPaymentIntentID(ctx context.Context, pi string) (*domai
 
 // scatterFirst runs a single-row query against every physical shard in
 // parallel and returns the first non-error match. Used for the two
-// no-merchant-context lookup paths. The returned order's ShardIndex is set
-// to the *physical* pool index of the shard that matched, expanded to a
-// logical index — for follow-up writes we need a logical index, so we
+// no-merchant-context lookup paths. The returned transaction's ShardIndex
+// is set to the *physical* pool index of the shard that matched, expanded
+// to a logical index — for follow-up writes we need a logical index, so we
 // rebuild one. With multiple logical shards mapping to the same physical
 // pool, any logical index in that range routes back to the same DB; we
 // pick the first such logical index.
-func (r *orderRepo) scatterFirst(ctx context.Context, q string, args ...any) (*domain.Order, error) {
+func (r *transactionRepo) scatterFirst(ctx context.Context, q string, args ...any) (*domain.Transaction, error) {
 	pools := r.router.All()
 	logicalForPhysical := r.physicalToFirstLogical(len(pools))
 	type result struct {
-		order *domain.Order
-		idx   int
-		err   error
+		txn *domain.Transaction
+		idx int
+		err error
 	}
 	results := make(chan result, len(pools))
 	for i, db := range pools {
 		go func(i int, db *sql.DB) {
 			row := db.QueryRowContext(ctx, q, args...)
-			o, err := scanOrder(row)
-			results <- result{order: o, idx: i, err: err}
+			t, err := scanTransaction(row)
+			results <- result{txn: t, idx: i, err: err}
 		}(i, db)
 	}
 
@@ -220,8 +220,8 @@ func (r *orderRepo) scatterFirst(ctx context.Context, q string, args ...any) (*d
 		// Found — annotate with the matching shard's logical index so
 		// follow-up writes route correctly. We don't drain the remaining
 		// goroutines; the channel is buffered, they exit on their own.
-		res.order.ShardIndex = logicalForPhysical[res.idx]
-		return res.order, nil
+		res.txn.ShardIndex = logicalForPhysical[res.idx]
+		return res.txn, nil
 	}
 	if misses == len(pools) {
 		return nil, ErrNotFound
@@ -233,7 +233,7 @@ func (r *orderRepo) scatterFirst(ctx context.Context, q string, args ...any) (*d
 // logical-shard index that routes to physical pool `i`. Any logical index
 // in the same partition works, so we pick the first one. Cheap to compute
 // on-demand; not cached because the router is fixed at startup.
-func (r *orderRepo) physicalToFirstLogical(physicalCount int) []uint8 {
+func (r *transactionRepo) physicalToFirstLogical(physicalCount int) []uint8 {
 	logicalCount := r.router.LogicalCount()
 	out := make([]uint8, physicalCount)
 	per := int(logicalCount) / physicalCount
@@ -244,7 +244,7 @@ func (r *orderRepo) physicalToFirstLogical(physicalCount int) []uint8 {
 	return out
 }
 
-func (r *orderRepo) UpdateStatus(ctx context.Context, shardIdx uint8, merchantID, orderID string, status domain.OrderStatus, stripePaymentIntentID string) error {
+func (r *transactionRepo) UpdateStatus(ctx context.Context, shardIdx uint8, merchantID, orderID string, status domain.TransactionStatus, stripePaymentIntentID string) error {
 	if err := domain.ValidateOrderID(orderID); err != nil {
 		return err
 	}
@@ -257,7 +257,7 @@ func (r *orderRepo) UpdateStatus(ctx context.Context, shardIdx uint8, merchantID
 		return fmt.Errorf("route: %w", err)
 	}
 	merch := []byte(merchantID)
-	now := unixToU32(time.Now().UTC())
+	now := time.Now().UTC()
 	// COALESCE(NULLIF(?, ''), ...) keeps the existing PI id if the caller
 	// passes "" (e.g. webhook for charge.refunded where the PI is already set).
 	q := `UPDATE transactions SET
@@ -275,7 +275,7 @@ func (r *orderRepo) UpdateStatus(ctx context.Context, shardIdx uint8, merchantID
 	return nil
 }
 
-func (r *orderRepo) UpdateCheckout(ctx context.Context, shardIdx uint8, merchantID, orderID, sessionID, piID string) error {
+func (r *transactionRepo) UpdateCheckout(ctx context.Context, shardIdx uint8, merchantID, orderID, sessionID, piID string) error {
 	if err := domain.ValidateOrderID(orderID); err != nil {
 		return err
 	}
@@ -284,7 +284,7 @@ func (r *orderRepo) UpdateCheckout(ctx context.Context, shardIdx uint8, merchant
 		return fmt.Errorf("route: %w", err)
 	}
 	merch := []byte(merchantID)
-	now := unixToU32(time.Now().UTC())
+	now := time.Now().UTC()
 	q := `UPDATE transactions SET
 			stripe_session = COALESCE(NULLIF(?, _binary''), stripe_session),
 			stripe_pi_id   = COALESCE(NULLIF(?, _binary''), stripe_pi_id),
@@ -300,27 +300,27 @@ func (r *orderRepo) UpdateCheckout(ctx context.Context, shardIdx uint8, merchant
 	return nil
 }
 
-// GetPendingBefore returns up to `limit` orders in created/pending state
-// whose created_at is older than `before`, scanning every physical shard
-// in parallel. The total cap is `limit` across all shards combined; per-
-// shard we ask for `limit` rows so we never miss a stuck order if all
-// stragglers happen to live on one shard.
-func (r *orderRepo) GetPendingBefore(ctx context.Context, before time.Time, limit int) ([]*domain.Order, error) {
+// GetPendingBefore returns up to `limit` transactions in created/pending
+// state whose created_at is older than `before`, scanning every physical
+// shard in parallel. The total cap is `limit` across all shards combined;
+// per-shard we ask for `limit` rows so we never miss a stuck transaction
+// if all stragglers happen to live on one shard.
+func (r *transactionRepo) GetPendingBefore(ctx context.Context, before time.Time, limit int) ([]*domain.Transaction, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
-	cutoff := unixToU32(before.UTC())
-	created, _ := encodeStatus(domain.OrderStatusCreated)
-	pending, _ := encodeStatus(domain.OrderStatusPending)
+	cutoff := before.UTC()
+	created, _ := encodeStatus(domain.TransactionStatusCreated)
+	pending, _ := encodeStatus(domain.TransactionStatusPending)
 	q := "SELECT " + selectCols + ` FROM transactions WHERE status IN (?, ?) AND created_at < ? ORDER BY created_at ASC LIMIT ?`
 
 	pools := r.router.All()
 	logicalForPhysical := r.physicalToFirstLogical(len(pools))
 
 	type shardResult struct {
-		orders []*domain.Order
-		idx    int
-		err    error
+		txns []*domain.Transaction
+		idx  int
+		err  error
 	}
 	results := make(chan shardResult, len(pools))
 
@@ -335,27 +335,27 @@ func (r *orderRepo) GetPendingBefore(ctx context.Context, before time.Time, limi
 				return
 			}
 			defer func() { _ = rows.Close() }()
-			out := make([]*domain.Order, 0, limit)
+			out := make([]*domain.Transaction, 0, limit)
 			for rows.Next() {
-				o, err := scanOrder(rows)
+				t, err := scanTransaction(rows)
 				if err != nil {
 					results <- shardResult{idx: i, err: fmt.Errorf("scan shard %d: %w", i, err)}
 					return
 				}
-				o.ShardIndex = logicalForPhysical[i]
-				out = append(out, o)
+				t.ShardIndex = logicalForPhysical[i]
+				out = append(out, t)
 			}
 			if err := rows.Err(); err != nil {
 				results <- shardResult{idx: i, err: err}
 				return
 			}
-			results <- shardResult{idx: i, orders: out}
+			results <- shardResult{idx: i, txns: out}
 		}(i, db)
 	}
 	wg.Wait()
 	close(results)
 
-	all := make([]*domain.Order, 0, limit)
+	all := make([]*domain.Transaction, 0, limit)
 	var firstErr error
 	for res := range results {
 		if res.err != nil {
@@ -364,7 +364,7 @@ func (r *orderRepo) GetPendingBefore(ctx context.Context, before time.Time, limi
 			}
 			continue
 		}
-		all = append(all, res.orders...)
+		all = append(all, res.txns...)
 	}
 	if firstErr != nil {
 		return nil, firstErr
@@ -372,27 +372,27 @@ func (r *orderRepo) GetPendingBefore(ctx context.Context, before time.Time, limi
 	// Stable order across reconciler ticks: oldest first, then by
 	// transaction_id as a tiebreaker so the same row doesn't keep flapping
 	// between shards on identical created_at seconds.
-	sortOrdersByCreatedAt(all)
+	sortTransactionsByCreatedAt(all)
 	if len(all) > limit {
 		all = all[:limit]
 	}
 	return all, nil
 }
 
-func sortOrdersByCreatedAt(orders []*domain.Order) {
+func sortTransactionsByCreatedAt(txns []*domain.Transaction) {
 	// Tiny n (≤ batch size, default 500). Insertion sort is plenty here
 	// and keeps the dependency surface zero. Stable on equal keys.
-	for i := 1; i < len(orders); i++ {
+	for i := 1; i < len(txns); i++ {
 		j := i
 		for j > 0 {
-			a, b := orders[j-1], orders[j]
+			a, b := txns[j-1], txns[j]
 			if a.CreatedAt.Before(b.CreatedAt) {
 				break
 			}
 			if a.CreatedAt.Equal(b.CreatedAt) && a.TransactionID <= b.TransactionID {
 				break
 			}
-			orders[j-1], orders[j] = orders[j], orders[j-1]
+			txns[j-1], txns[j] = txns[j], txns[j-1]
 			j--
 		}
 	}
@@ -402,7 +402,7 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
-func scanOrder(s scanner) (*domain.Order, error) {
+func scanTransaction(s scanner) (*domain.Transaction, error) {
 	var (
 		merch        []byte
 		txn          []byte
@@ -413,14 +413,14 @@ func scanOrder(s scanner) (*domain.Order, error) {
 		method       uint8
 		piID         []byte
 		sessID       []byte
-		createdSec   uint32
-		updatedSec   uint32
+		createdAt    time.Time
+		updatedAt    time.Time
 	)
-	if err := s.Scan(&merch, &txn, &ord, &amount, &currencyCode, &status, &method, &piID, &sessID, &createdSec, &updatedSec); err != nil {
+	if err := s.Scan(&merch, &txn, &ord, &amount, &currencyCode, &status, &method, &piID, &sessID, &createdAt, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
-		return nil, fmt.Errorf("scan order: %w", err)
+		return nil, fmt.Errorf("scan transaction: %w", err)
 	}
 	cur, err := decodeCurrency(currencyCode)
 	if err != nil {
@@ -430,7 +430,7 @@ func scanOrder(s scanner) (*domain.Order, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &domain.Order{
+	return &domain.Transaction{
 		MerchantID:            string(merch),
 		TransactionID:         hexLower(txn),
 		OrderID:               ord,
@@ -440,8 +440,8 @@ func scanOrder(s scanner) (*domain.Order, error) {
 		PaymentMethod:         decodeMethod(method),
 		StripeSessionID:       string(sessID),
 		StripePaymentIntentID: string(piID),
-		CreatedAt:             time.Unix(int64(createdSec), 0).UTC(),
-		UpdatedAt:             time.Unix(int64(updatedSec), 0).UTC(),
+		CreatedAt:             createdAt.UTC(),
+		UpdatedAt:             updatedAt.UTC(),
 	}, nil
 }
 
@@ -461,21 +461,6 @@ func nullString(s string) any {
 		return nil
 	}
 	return s
-}
-
-// unixToU32 truncates a Unix timestamp to uint32. Negative values clamp to
-// 0 (pre-epoch is impossible in practice but keeps gosec G115 quiet) and
-// values past 2106 wrap, which the schema accepts: at that point we'll
-// migrate to BIGINT or beyond.
-func unixToU32(t time.Time) uint32 {
-	v := t.Unix()
-	if v < 0 {
-		return 0
-	}
-	if v > int64(^uint32(0)) {
-		return ^uint32(0)
-	}
-	return uint32(v)
 }
 
 func hexLower(b []byte) string {

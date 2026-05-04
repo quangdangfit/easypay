@@ -13,7 +13,7 @@ import (
 	"github.com/quangdangfit/easypay/internal/repository"
 )
 
-func newStatusApp(repo repository.OrderRepository, merchantID string) *fiber.App {
+func newStatusApp(repo repository.TransactionRepository, merchantID string) *fiber.App {
 	app := fiber.New()
 	app.Use(func(c *fiber.Ctx) error {
 		c.Locals(middleware.LocalsMerchant, &domain.Merchant{MerchantID: merchantID, Status: domain.MerchantStatusActive})
@@ -26,9 +26,9 @@ func newStatusApp(repo repository.OrderRepository, merchantID string) *fiber.App
 
 func TestPaymentStatus_HappyPath(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	repo := repomock.NewMockOrderRepository(ctrl)
+	repo := repomock.NewMockTransactionRepository(ctrl)
 	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), "M1", "ord-1").
-		Return(&domain.Order{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", Status: domain.OrderStatusPaid}, nil)
+		Return(&domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", Status: domain.TransactionStatusPaid}, nil)
 
 	app := newStatusApp(repo, "M1")
 	resp, err := app.Test(httptest.NewRequest("GET", "/api/payments/ord-1", nil))
@@ -42,7 +42,7 @@ func TestPaymentStatus_HappyPath(t *testing.T) {
 
 func TestPaymentStatus_NotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	repo := repomock.NewMockOrderRepository(ctrl)
+	repo := repomock.NewMockTransactionRepository(ctrl)
 	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, repository.ErrNotFound)
 
 	app := newStatusApp(repo, "M1")
@@ -56,7 +56,7 @@ func TestPaymentStatus_NotFound(t *testing.T) {
 // 404 (we don't leak structural validation back to the merchant).
 func TestPaymentStatus_BadOrderIDIsNotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	repo := repomock.NewMockOrderRepository(ctrl)
+	repo := repomock.NewMockTransactionRepository(ctrl)
 	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, domain.ErrInvalidOrderID).AnyTimes()
 
@@ -69,7 +69,7 @@ func TestPaymentStatus_BadOrderIDIsNotFound(t *testing.T) {
 
 func TestPaymentStatus_RejectsMissingMerchant(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	repo := repomock.NewMockOrderRepository(ctrl)
+	repo := repomock.NewMockTransactionRepository(ctrl)
 	// Handler bails out at merchant check before any repo call.
 
 	app := fiber.New()

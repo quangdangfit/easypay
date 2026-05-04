@@ -25,10 +25,10 @@ func TestReconciliationCron(t *testing.T) {
 	env := SetupEnv(t)
 	defer env.Cleanup(t)
 
-	orderRepo := repository.NewOrderRepository(env.Router)
+	orderRepo := repository.NewTransactionRepository(env.Router)
 
 	const merchantID = "M_RECON"
-	stuck := SeedOrder(t, orderRepo, merchantID, "RECON-1", 2500, domain.OrderStatusPending, func(o *domain.Order) {
+	stuck := SeedOrder(t, orderRepo, merchantID, "RECON-1", 2500, domain.TransactionStatusPending, func(o *domain.Transaction) {
 		o.StripePaymentIntentID = "pi_recon_1"
 	})
 	// Backdate created_at so the reconciler considers the row stuck.
@@ -105,7 +105,7 @@ func TestReconciliationCron(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read order: %v", err)
 	}
-	if o.Status != domain.OrderStatusPaid {
+	if o.Status != domain.TransactionStatusPaid {
 		t.Fatalf("status: got %s want paid", o.Status)
 	}
 }

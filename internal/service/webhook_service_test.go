@@ -36,7 +36,7 @@ func signedEvent(t *testing.T, secret, eventID, eventType, orderID, piID string)
 const sec = "whsec_test"
 
 func TestWebhook_BadSignatureRejected(t *testing.T) {
-	repo := newOrderStore(t)
+	repo := newTxStore(t)
 	pub := newEventCapture(t)
 	rc := newRedis(t)
 	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
@@ -48,7 +48,7 @@ func TestWebhook_BadSignatureRejected(t *testing.T) {
 }
 
 func TestWebhook_DuplicateEventReturnsErrDuplicate(t *testing.T) {
-	repo := newOrderStore(t, &domain.Order{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1"})
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1"})
 	pub := newEventCapture(t)
 	rc := newRedis(t)
 	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
@@ -64,7 +64,7 @@ func TestWebhook_DuplicateEventReturnsErrDuplicate(t *testing.T) {
 }
 
 func TestWebhook_SucceededPath(t *testing.T) {
-	repo := newOrderStore(t, &domain.Order{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1"})
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1"})
 	pub := newEventCapture(t)
 	rc := newRedis(t)
 	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
@@ -74,7 +74,7 @@ func TestWebhook_SucceededPath(t *testing.T) {
 	if err := svc.Process(context.Background(), body, hdr); err != nil {
 		t.Fatalf("process: %v", err)
 	}
-	if repo.byID["M1:ord-1"].Status != domain.OrderStatusPaid {
+	if repo.byID["M1:ord-1"].Status != domain.TransactionStatusPaid {
 		t.Fatalf("status: %s", repo.byID["M1:ord-1"].Status)
 	}
 	if len(pub.confirmed) != 1 {
@@ -83,7 +83,7 @@ func TestWebhook_SucceededPath(t *testing.T) {
 }
 
 func TestWebhook_FailedPath(t *testing.T) {
-	repo := newOrderStore(t, &domain.Order{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD"})
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD"})
 	pub := newEventCapture(t)
 	rc := newRedis(t)
 	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
@@ -93,13 +93,13 @@ func TestWebhook_FailedPath(t *testing.T) {
 	if err := svc.Process(context.Background(), body, hdr); err != nil {
 		t.Fatalf("process: %v", err)
 	}
-	if repo.byID["M1:ord-1"].Status != domain.OrderStatusFailed {
+	if repo.byID["M1:ord-1"].Status != domain.TransactionStatusFailed {
 		t.Fatalf("status: %s", repo.byID["M1:ord-1"].Status)
 	}
 }
 
 func TestWebhook_RefundedPath(t *testing.T) {
-	repo := newOrderStore(t, &domain.Order{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1"})
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1"})
 	pub := newEventCapture(t)
 	rc := newRedis(t)
 	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
@@ -110,13 +110,13 @@ func TestWebhook_RefundedPath(t *testing.T) {
 	if err := svc.Process(context.Background(), body, hdr); err != nil {
 		t.Fatalf("process: %v", err)
 	}
-	if repo.byID["M1:ord-1"].Status != domain.OrderStatusRefunded {
+	if repo.byID["M1:ord-1"].Status != domain.TransactionStatusRefunded {
 		t.Fatalf("status: %s", repo.byID["M1:ord-1"].Status)
 	}
 }
 
 func TestWebhook_DisputeIsNoOp(t *testing.T) {
-	repo := newOrderStore(t, &domain.Order{OrderID: "ord-1", MerchantID: "M1"})
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1"})
 	rc := newRedis(t)
 	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), newEventCapture(t).mock, rc, sec)
 	body := signedEvent(t, sec, "evt_disp", "charge.dispute.created", "ord-1", "pi_1")
@@ -124,14 +124,14 @@ func TestWebhook_DisputeIsNoOp(t *testing.T) {
 	if err := svc.Process(context.Background(), body, hdr); err != nil {
 		t.Fatalf("process: %v", err)
 	}
-	if repo.byID["M1:ord-1"].Status == domain.OrderStatusFailed {
+	if repo.byID["M1:ord-1"].Status == domain.TransactionStatusFailed {
 		t.Fatal("dispute shouldn't fail order")
 	}
 }
 
 func TestWebhook_UnknownEventTypeIgnored(t *testing.T) {
 	rc := newRedis(t)
-	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), newOrderStore(t).mock, stubMerchants(t, 0), newEventCapture(t).mock, rc, sec)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), newTxStore(t).mock, stubMerchants(t, 0), newEventCapture(t).mock, rc, sec)
 	body := signedEvent(t, sec, "evt_x", "unknown.event", "ord-1", "pi_1")
 	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
 	if err := svc.Process(context.Background(), body, hdr); err != nil {
@@ -142,7 +142,7 @@ func TestWebhook_UnknownEventTypeIgnored(t *testing.T) {
 // --- CreateRefund ---
 
 func TestCreateRefund_HappyPath(t *testing.T) {
-	repo := newOrderStore(t, &domain.Order{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1"})
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1"})
 	rc := newRedis(t)
 	sf := newWebhookStripe(t, webhookStripeOpts{refundID: "re_1"})
 	svc := NewWebhookService(sf, repo.mock, stubMerchants(t, 0), newEventCapture(t).mock, rc, sec)
@@ -158,7 +158,7 @@ func TestCreateRefund_HappyPath(t *testing.T) {
 }
 
 func TestCreateRefund_RejectsForeignMerchant(t *testing.T) {
-	repo := newOrderStore(t, &domain.Order{OrderID: "ord-1", MerchantID: "M1", StripePaymentIntentID: "pi_1"})
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", StripePaymentIntentID: "pi_1"})
 	rc := newRedis(t)
 	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), newEventCapture(t).mock, rc, sec)
 	_, err := svc.CreateRefund(context.Background(), RefundInput{
@@ -170,7 +170,7 @@ func TestCreateRefund_RejectsForeignMerchant(t *testing.T) {
 }
 
 func TestCreateRefund_RequiresPaymentIntent(t *testing.T) {
-	repo := newOrderStore(t, &domain.Order{OrderID: "ord-1", MerchantID: "M1"}) // no PI yet
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1"}) // no PI yet
 	rc := newRedis(t)
 	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), newEventCapture(t).mock, rc, sec)
 	_, err := svc.CreateRefund(context.Background(), RefundInput{
@@ -183,7 +183,7 @@ func TestCreateRefund_RequiresPaymentIntent(t *testing.T) {
 
 func TestCreateRefund_RequiresMerchantAndOrder(t *testing.T) {
 	rc := newRedis(t)
-	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), newOrderStore(t).mock, stubMerchants(t, 0), newEventCapture(t).mock, rc, sec)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), newTxStore(t).mock, stubMerchants(t, 0), newEventCapture(t).mock, rc, sec)
 	_, err := svc.CreateRefund(context.Background(), RefundInput{Merchant: nil, OrderID: ""})
 	if err == nil {
 		t.Fatal("expected validation error")

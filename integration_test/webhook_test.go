@@ -28,19 +28,19 @@ func TestStripeWebhookFlow(t *testing.T) {
 	env := SetupEnv(t)
 	defer env.Cleanup(t)
 
-	orderRepo := repository.NewOrderRepository(env.Router)
+	orderRepo := repository.NewTransactionRepository(env.Router)
 	merchantRepo := repository.NewMerchantRepository(env.Router, 16)
 	mock := NewMockStripe()
 
 	const merchantID = "M_WB"
 	SeedMerchant(t, env.DB, merchantID, "ms-secret", "")
 	type seeded struct {
-		order *domain.Order
+		order *domain.Transaction
 		piID  string
 	}
 	seed := func(t *testing.T, slug, piID string) seeded {
 		t.Helper()
-		o := SeedOrder(t, orderRepo, merchantID, slug, 1500, domain.OrderStatusPending, func(o *domain.Order) {
+		o := SeedOrder(t, orderRepo, merchantID, slug, 1500, domain.TransactionStatusPending, func(o *domain.Transaction) {
 			o.StripePaymentIntentID = piID
 		})
 		return seeded{order: o, piID: piID}
@@ -94,7 +94,7 @@ func TestStripeWebhookFlow(t *testing.T) {
 			t.Fatalf("process: %v", err)
 		}
 		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), 0, main.order.MerchantID, main.order.OrderID)
-		if o.Status != domain.OrderStatusPaid {
+		if o.Status != domain.TransactionStatusPaid {
 			t.Fatalf("status: got %s want paid", o.Status)
 		}
 	})
@@ -119,7 +119,7 @@ func TestStripeWebhookFlow(t *testing.T) {
 			t.Fatalf("process: %v", err)
 		}
 		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), 0, s.order.MerchantID, s.order.OrderID)
-		if o.Status != domain.OrderStatusFailed {
+		if o.Status != domain.TransactionStatusFailed {
 			t.Fatalf("status: got %s want failed", o.Status)
 		}
 	})
@@ -145,7 +145,7 @@ func TestStripeWebhookFlow(t *testing.T) {
 			t.Fatalf("process: %v", err)
 		}
 		o, _ := orderRepo.GetByMerchantOrderID(context.Background(), 0, s.order.MerchantID, s.order.OrderID)
-		if o.Status != domain.OrderStatusRefunded {
+		if o.Status != domain.TransactionStatusRefunded {
 			t.Fatalf("status: got %s want refunded", o.Status)
 		}
 
@@ -174,7 +174,7 @@ func TestStripeWebhookFlow(t *testing.T) {
 			var ev kafka.PaymentConfirmedEvent
 			if json.Unmarshal(m.Value, &ev) == nil &&
 				ev.OrderID == s.order.OrderID &&
-				ev.Status == string(domain.OrderStatusRefunded) {
+				ev.Status == string(domain.TransactionStatusRefunded) {
 				found = true
 			}
 		}

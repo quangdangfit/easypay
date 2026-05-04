@@ -10,7 +10,7 @@ func TestListener_RunStopsAllSubLoopsOnCancel(t *testing.T) {
 	chain := &fakeChain{blockNum: 0}
 	cur := newMemCursor()
 	repo := newPendingTxStore(t)
-	orders := newOrderStore(t)
+	orders := newTxStore(t)
 	pub := newEventCapture(t)
 
 	l := NewListener(chain, ChainConfig{ChainID: 1}, cur, repo.mock, orders.mock, pub.mock)

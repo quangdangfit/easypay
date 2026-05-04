@@ -23,14 +23,14 @@ func tKey() string { return tMerchant + ":" + tOrder }
 
 // resolverDeps holds the wired dependencies so tests can inspect state.
 type resolverDeps struct {
-	repo    *orderStore
+	repo    *txStore
 	stripeC *stripeStub
 }
 
 func newResolverWithDeps(t *testing.T, opts ...func(*CheckoutResolverOptions)) (Checkouts, *resolverDeps) {
 	t.Helper()
 	d := &resolverDeps{
-		repo:    newOrderStore(t),
+		repo:    newTxStore(t),
 		stripeC: newStripeStub(t),
 	}
 	o := CheckoutResolverOptions{
@@ -51,7 +51,7 @@ func newResolverWithDeps(t *testing.T, opts ...func(*CheckoutResolverOptions)) (
 
 func TestResolve_DBHotPath_ReconstructsFromSession(t *testing.T) {
 	r, d := newResolverWithDeps(t)
-	d.repo.byID[tKey()] = &domain.Order{MerchantID: tMerchant, OrderID: tOrder, StripeSessionID: "cs_old"}
+	d.repo.byID[tKey()] = &domain.Transaction{MerchantID: tMerchant, OrderID: tOrder, StripeSessionID: "cs_old"}
 	url, err := r.Resolve(context.Background(), tMerchant, tOrder)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -67,7 +67,7 @@ func TestResolve_DBHotPath_ReconstructsFromSession(t *testing.T) {
 func TestResolve_LazyOrderTriggersStripeCreate(t *testing.T) {
 	// Row exists but no Stripe session yet — resolver creates one.
 	r, d := newResolverWithDeps(t)
-	d.repo.byID[tKey()] = &domain.Order{MerchantID: tMerchant, OrderID: tOrder, Amount: 1500, Currency: "USD"}
+	d.repo.byID[tKey()] = &domain.Transaction{MerchantID: tMerchant, OrderID: tOrder, Amount: 1500, Currency: "USD"}
 	url, err := r.Resolve(context.Background(), tMerchant, tOrder)
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -95,7 +95,7 @@ func TestResolve_RateLimitReturnsUnavailable(t *testing.T) {
 	r, d := newResolverWithDeps(t, func(o *CheckoutResolverOptions) {
 		o.Bucket = blockingBucket(t)
 	})
-	d.repo.byID[tKey()] = &domain.Order{MerchantID: tMerchant, OrderID: tOrder, Amount: 1500, Currency: "USD"}
+	d.repo.byID[tKey()] = &domain.Transaction{MerchantID: tMerchant, OrderID: tOrder, Amount: 1500, Currency: "USD"}
 	_, err := r.Resolve(context.Background(), tMerchant, tOrder)
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("want ErrUnavailable, got %v", err)
@@ -111,7 +111,7 @@ func TestResolve_BreakerOpenReturnsUnavailable(t *testing.T) {
 	r, d := newResolverWithDeps(t, func(o *CheckoutResolverOptions) {
 		o.Stripe = openMock
 	})
-	d.repo.byID[tKey()] = &domain.Order{MerchantID: tMerchant, OrderID: tOrder, Amount: 1500, Currency: "USD"}
+	d.repo.byID[tKey()] = &domain.Transaction{MerchantID: tMerchant, OrderID: tOrder, Amount: 1500, Currency: "USD"}
 	_, err := r.Resolve(context.Background(), tMerchant, tOrder)
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("want ErrUnavailable, got %v", err)
@@ -119,7 +119,7 @@ func TestResolve_BreakerOpenReturnsUnavailable(t *testing.T) {
 }
 
 func TestResolveAfterLock_ReturnsURLWhenPresent(t *testing.T) {
-	repo := newOrderStore(t, &domain.Order{MerchantID: tMerchant, OrderID: tOrder, StripeSessionID: "cs_x"})
+	repo := newTxStore(t, &domain.Transaction{MerchantID: tMerchant, OrderID: tOrder, StripeSessionID: "cs_x"})
 	r := NewCheckoutResolver(CheckoutResolverOptions{
 		Repo:     repo.mock,
 		URLCache: cache.NewURLCache(8, time.Second),
@@ -135,7 +135,7 @@ func TestResolveAfterLock_ReturnsURLWhenPresent(t *testing.T) {
 
 func TestResolveAfterLock_NotReadyWhenMissing(t *testing.T) {
 	r := NewCheckoutResolver(CheckoutResolverOptions{
-		Repo:     newOrderStore(t).mock,
+		Repo:     newTxStore(t).mock,
 		URLCache: cache.NewURLCache(8, time.Second),
 	}).(*checkoutResolver)
 	_, err := r.resolveAfterLock(context.Background(), 0, tMerchant, "ord-none", tMerchant+":ord-none")
@@ -145,7 +145,7 @@ func TestResolveAfterLock_NotReadyWhenMissing(t *testing.T) {
 }
 
 func TestResolveAfterLock_NotReadyWhenSessionMissing(t *testing.T) {
-	repo := newOrderStore(t, &domain.Order{MerchantID: tMerchant, OrderID: tOrder, Amount: 1}) // no StripeSessionID
+	repo := newTxStore(t, &domain.Transaction{MerchantID: tMerchant, OrderID: tOrder, Amount: 1}) // no StripeSessionID
 	r := NewCheckoutResolver(CheckoutResolverOptions{Repo: repo.mock}).(*checkoutResolver)
 	_, err := r.resolveAfterLock(context.Background(), 0, tMerchant, tOrder, tKey())
 	if !errors.Is(err, ErrOrderNotReady) {
@@ -155,7 +155,7 @@ func TestResolveAfterLock_NotReadyWhenSessionMissing(t *testing.T) {
 
 func TestResolve_LocalLRUSecondHit(t *testing.T) {
 	r, d := newResolverWithDeps(t)
-	d.repo.byID[tKey()] = &domain.Order{MerchantID: tMerchant, OrderID: tOrder, StripeSessionID: "cs_old"}
+	d.repo.byID[tKey()] = &domain.Transaction{MerchantID: tMerchant, OrderID: tOrder, StripeSessionID: "cs_old"}
 	_, _ = r.Resolve(context.Background(), tMerchant, tOrder)
 	// Second call should hit the in-process cache; we delete the DB row to
 	// prove the cache is what serves the response.

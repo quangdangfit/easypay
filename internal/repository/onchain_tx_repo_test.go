@@ -15,10 +15,10 @@ import (
 
 func onchainRow() *sqlmock.Rows {
 	return sqlmock.NewRows([]string{
-		"id", "tx_hash", "block_number", "order_id", "payer", "token",
+		"id", "tx_hash", "block_number", "merchant_id", "order_id", "payer", "token",
 		"amount", "chain_id", "confirmations", "required_confirm", "status",
 		"created_at",
-	}).AddRow(int64(1), "0xabc", uint64(100), "ord-1", "0xdead", "0xbeef",
+	}).AddRow(int64(1), "0xabc", uint64(100), "M1", "ord-1", "0xdead", "0xbeef",
 		"123", int64(11155111), uint64(3), uint64(12), "pending", time.Now())
 }
 

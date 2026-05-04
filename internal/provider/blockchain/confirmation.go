@@ -21,13 +21,13 @@ type ConfirmationTracker struct {
 	Client     ChainClient
 	Cfg        ChainConfig
 	PendingTxs repository.OnchainTxRepository
-	Orders     repository.OrderRepository
+	Orders     repository.TransactionRepository
 	Publisher  kafka.EventPublisher
 	BlockTime  time.Duration
 	BatchLimit int
 }
 
-func NewConfirmationTracker(c ChainClient, cfg ChainConfig, ptx repository.OnchainTxRepository, orders repository.OrderRepository, p kafka.EventPublisher) *ConfirmationTracker {
+func NewConfirmationTracker(c ChainClient, cfg ChainConfig, ptx repository.OnchainTxRepository, orders repository.TransactionRepository, p kafka.EventPublisher) *ConfirmationTracker {
 	return &ConfirmationTracker{
 		Client: c, Cfg: cfg, PendingTxs: ptx, Orders: orders, Publisher: p,
 		BlockTime:  12 * time.Second,
@@ -103,7 +103,7 @@ func (t *ConfirmationTracker) processOne(ctx context.Context, p *domain.OnchainT
 		log.Warn("order lookup failed", "err", err)
 		return
 	}
-	if order.Status == domain.OrderStatusPaid || order.Status == domain.OrderStatusRefunded {
+	if order.Status == domain.TransactionStatusPaid || order.Status == domain.TransactionStatusRefunded {
 		// Already finalised.
 		_ = t.PendingTxs.UpdateConfirmations(ctx, p.TxHash, confirmations, domain.OnchainTxStatusConfirmed)
 		return
@@ -118,14 +118,14 @@ func (t *ConfirmationTracker) processOne(ctx context.Context, p *domain.OnchainT
 		log.Warn("mark confirmed failed", "err", err)
 		return
 	}
-	if err := t.Orders.UpdateStatus(ctx, order.ShardIndex, order.MerchantID, order.OrderID, domain.OrderStatusPaid, ""); err != nil {
+	if err := t.Orders.UpdateStatus(ctx, order.ShardIndex, order.MerchantID, order.OrderID, domain.TransactionStatusPaid, ""); err != nil {
 		log.Warn("update order status failed", "err", err)
 		return
 	}
 	confirmed := kafka.PaymentConfirmedEvent{
 		OrderID:     order.OrderID,
 		MerchantID:  order.MerchantID,
-		Status:      string(domain.OrderStatusPaid),
+		Status:      string(domain.TransactionStatusPaid),
 		Amount:      order.Amount,
 		Currency:    order.Currency,
 		ConfirmedAt: time.Now().UTC().Unix(),

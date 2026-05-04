@@ -181,9 +181,9 @@ func DeriveTransactionID(merchantID, orderID string) string {
 // SeedOrder inserts a row with deterministic transaction_id derived from
 // (merchant_id, order_id). The order_id is merchant-supplied, so callers
 // pass it verbatim.
-func SeedOrder(t *testing.T, repo repository.OrderRepository, merchantID, orderID string, amount int64, status domain.OrderStatus, opts ...func(*domain.Order)) *domain.Order {
+func SeedOrder(t *testing.T, repo repository.TransactionRepository, merchantID, orderID string, amount int64, status domain.TransactionStatus, opts ...func(*domain.Transaction)) *domain.Transaction {
 	t.Helper()
-	o := &domain.Order{
+	o := &domain.Transaction{
 		MerchantID:    merchantID,
 		TransactionID: DeriveTransactionID(merchantID, orderID),
 		OrderID:       orderID,

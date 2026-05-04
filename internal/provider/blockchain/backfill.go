@@ -24,13 +24,14 @@ type BackfillScanner struct {
 	Cfg        ChainConfig
 	Cursor     CursorStore
 	PendingTxs repository.OnchainTxRepository
+	Orders     repository.TransactionRepository
 	Interval   time.Duration
 	BatchSize  uint64
 }
 
-func NewBackfillScanner(c ChainClient, cfg ChainConfig, cur CursorStore, repo repository.OnchainTxRepository) *BackfillScanner {
+func NewBackfillScanner(c ChainClient, cfg ChainConfig, cur CursorStore, repo repository.OnchainTxRepository, orders repository.TransactionRepository) *BackfillScanner {
 	return &BackfillScanner{
-		Client: c, Cfg: cfg, Cursor: cur, PendingTxs: repo,
+		Client: c, Cfg: cfg, Cursor: cur, PendingTxs: repo, Orders: orders,
 		Interval:  5 * time.Minute,
 		BatchSize: 5000,
 	}
@@ -105,9 +106,21 @@ func (b *BackfillScanner) persist(ctx context.Context, lg types.Log) {
 	if err != nil {
 		return
 	}
+	order, err := b.Orders.GetByOrderIDAny(ctx, parsed.OrderID)
+	if err != nil {
+		// Unknown order_id — same handling as the subscriber: drop and warn.
+		if errors.Is(err, repository.ErrNotFound) {
+			logger.L().Warn("backfill saw event for unknown order_id, dropping",
+				"tx", hash, "order_id", parsed.OrderID)
+			return
+		}
+		logger.L().Warn("backfill resolve merchant failed", "err", err, "tx", hash)
+		return
+	}
 	tx := &domain.OnchainTransaction{
 		TxHash:          hash,
 		BlockNumber:     lg.BlockNumber,
+		MerchantID:      order.MerchantID,
 		OrderID:         parsed.OrderID,
 		Payer:           parsed.Payer.Hex(),
 		Token:           parsed.Token.Hex(),

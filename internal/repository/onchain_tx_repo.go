@@ -24,27 +24,27 @@ type onchainTxRepo struct {
 }
 
 // NewOnchainTxRepository builds the on-chain repo over the control-plane
-// pool. onchain_transactions is keyed on (tx_hash, order_id, chain_id) and
-// has no merchant_id column — there is nothing meaningful to shard on, so
-// it lives globally on the control plane.
+// pool. onchain_transactions is keyed on tx_hash UNIQUE and lives globally
+// on the control plane; merchant_id is denormalized from the matching
+// `transactions` row at insert time to support per-merchant ops queries.
 func NewOnchainTxRepository(router ShardRouter) OnchainTxRepository {
 	return &onchainTxRepo{db: router.Control()}
 }
 
-const onchainCols = `id, tx_hash, block_number, order_id, payer, token, amount, chain_id,
+const onchainCols = `id, tx_hash, block_number, merchant_id, order_id, payer, token, amount, chain_id,
 		confirmations, required_confirm, status, created_at`
 
 func (r *onchainTxRepo) Create(ctx context.Context, tx *domain.OnchainTransaction) error {
 	const q = `INSERT INTO onchain_transactions
-		(tx_hash, block_number, order_id, payer, token, amount, chain_id,
+		(tx_hash, block_number, merchant_id, order_id, payer, token, amount, chain_id,
 		 confirmations, required_confirm, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	amt := "0"
 	if tx.Amount != nil {
 		amt = tx.Amount.String()
 	}
 	res, err := r.db.ExecContext(ctx, q,
-		tx.TxHash, tx.BlockNumber, tx.OrderID, nullString(tx.Payer), nullString(tx.Token),
+		tx.TxHash, tx.BlockNumber, tx.MerchantID, tx.OrderID, nullString(tx.Payer), nullString(tx.Token),
 		amt, tx.ChainID, tx.Confirmations, tx.RequiredConfirm, string(tx.Status),
 	)
 	if err != nil {
@@ -99,7 +99,7 @@ func scanOnchainTx(s scanner) (*domain.OnchainTransaction, error) {
 	var status, amt string
 	var payer, token sql.NullString
 	if err := s.Scan(
-		&t.ID, &t.TxHash, &t.BlockNumber, &t.OrderID, &payer, &token,
+		&t.ID, &t.TxHash, &t.BlockNumber, &t.MerchantID, &t.OrderID, &payer, &token,
 		&amt, &t.ChainID, &t.Confirmations, &t.RequiredConfirm, &status, &t.CreatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

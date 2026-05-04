@@ -29,7 +29,7 @@ var (
 // webhookService implements Webhooks.
 type webhookService struct {
 	stripe        stripe.Client
-	repo          repository.OrderRepository
+	repo          repository.TransactionRepository
 	merchants     repository.MerchantRepository
 	publisher     kafka.EventPublisher
 	rc            *redis.Client
@@ -41,7 +41,7 @@ type webhookService struct {
 // merchant's logical shard — we resolve `merchant_id → shard_index` (cached
 // LRU hit) before each transactions-table call so the write lands on the
 // correct physical pool.
-func NewWebhookService(s stripe.Client, orders repository.OrderRepository, merchants repository.MerchantRepository, p kafka.EventPublisher, rc *redis.Client, webhookSecret string) Webhooks {
+func NewWebhookService(s stripe.Client, orders repository.TransactionRepository, merchants repository.MerchantRepository, p kafka.EventPublisher, rc *redis.Client, webhookSecret string) Webhooks {
 	return &webhookService{
 		stripe:        s,
 		repo:          orders,
@@ -154,7 +154,7 @@ func (s *webhookService) handleSucceeded(ctx context.Context, e *stripe.Event) e
 	if err != nil {
 		return err
 	}
-	if err := s.repo.UpdateStatus(ctx, shardIdx, merchantID, orderID, domain.OrderStatusPaid, piID); err != nil {
+	if err := s.repo.UpdateStatus(ctx, shardIdx, merchantID, orderID, domain.TransactionStatusPaid, piID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return fmt.Errorf("%w: %s", ErrWebhookOrderMissing, orderID)
 		}
@@ -168,7 +168,7 @@ func (s *webhookService) handleSucceeded(ctx context.Context, e *stripe.Event) e
 	confirmed := kafka.PaymentConfirmedEvent{
 		OrderID:               order.OrderID,
 		MerchantID:            order.MerchantID,
-		Status:                string(domain.OrderStatusPaid),
+		Status:                string(domain.TransactionStatusPaid),
 		StripePaymentIntentID: order.StripePaymentIntentID,
 		Amount:                order.Amount,
 		Currency:              order.Currency,
@@ -195,7 +195,7 @@ func (s *webhookService) handleFailed(ctx context.Context, e *stripe.Event) erro
 	if err != nil {
 		return err
 	}
-	if err := s.repo.UpdateStatus(ctx, shardIdx, merchantID, orderID, domain.OrderStatusFailed, piID); err != nil {
+	if err := s.repo.UpdateStatus(ctx, shardIdx, merchantID, orderID, domain.TransactionStatusFailed, piID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return fmt.Errorf("%w: %s", ErrWebhookOrderMissing, orderID)
 		}
@@ -243,7 +243,7 @@ func (s *webhookService) handleRefunded(ctx context.Context, e *stripe.Event) er
 		}
 		shardIdx = idx
 	}
-	if err := s.repo.UpdateStatus(ctx, shardIdx, merchantID, orderID, domain.OrderStatusRefunded, piID); err != nil {
+	if err := s.repo.UpdateStatus(ctx, shardIdx, merchantID, orderID, domain.TransactionStatusRefunded, piID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return fmt.Errorf("%w: %s", ErrWebhookOrderMissing, orderID)
 		}
@@ -256,7 +256,7 @@ func (s *webhookService) handleRefunded(ctx context.Context, e *stripe.Event) er
 	confirmed := kafka.PaymentConfirmedEvent{
 		OrderID:               order.OrderID,
 		MerchantID:            order.MerchantID,
-		Status:                string(domain.OrderStatusRefunded),
+		Status:                string(domain.TransactionStatusRefunded),
 		StripePaymentIntentID: order.StripePaymentIntentID,
 		Amount:                order.Amount,
 		Currency:              order.Currency,

@@ -13,30 +13,30 @@ import (
 	"github.com/quangdangfit/easypay/internal/repository"
 )
 
-// orderStore wires a MockOrderRepository whose behaviour is backed by an
+// txStore wires a MockTransactionRepository whose behaviour is backed by an
 // in-memory map. Tests reach into byID to seed and assert state.
-type orderStore struct {
-	byID map[string]*domain.Order
-	mock *repomock.MockOrderRepository
+type txStore struct {
+	byID map[string]*domain.Transaction
+	mock *repomock.MockTransactionRepository
 }
 
-func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
+func newTxStore(t *testing.T, seed ...*domain.Transaction) *txStore {
 	t.Helper()
-	s := &orderStore{byID: map[string]*domain.Order{}}
+	s := &txStore{byID: map[string]*domain.Transaction{}}
 	for _, o := range seed {
 		s.byID[o.OrderID] = o
 	}
-	s.mock = repomock.NewMockOrderRepository(gomock.NewController(t))
+	s.mock = repomock.NewMockTransactionRepository(gomock.NewController(t))
 	s.mock.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	s.mock.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ uint8, _ string, id string) (*domain.Order, error) {
+		DoAndReturn(func(_ context.Context, _ uint8, _ string, id string) (*domain.Transaction, error) {
 			if o, ok := s.byID[id]; ok {
 				return o, nil
 			}
 			return nil, repository.ErrNotFound
 		}).AnyTimes()
 	s.mock.EXPECT().GetByOrderIDAny(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, id string) (*domain.Order, error) {
+		DoAndReturn(func(_ context.Context, id string) (*domain.Transaction, error) {
 			if o, ok := s.byID[id]; ok {
 				return o, nil
 			}
@@ -47,7 +47,7 @@ func newOrderStore(t *testing.T, seed ...*domain.Order) *orderStore {
 	s.mock.EXPECT().GetByPaymentIntentID(gomock.Any(), gomock.Any()).
 		Return(nil, repository.ErrNotFound).AnyTimes()
 	s.mock.EXPECT().UpdateStatus(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ uint8, _ string, id string, st domain.OrderStatus, _ string) error {
+		DoAndReturn(func(_ context.Context, _ uint8, _ string, id string, st domain.TransactionStatus, _ string) error {
 			if o, ok := s.byID[id]; ok {
 				o.Status = st
 				return nil

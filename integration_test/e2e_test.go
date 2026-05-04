@@ -65,7 +65,7 @@ func TestFullPaymentFlow_E2E(t *testing.T) {
 	publisher := kafka.NewPublisher(kafkaCfg)
 	defer func() { _ = publisher.Close() }()
 
-	orderRepo := repository.NewOrderRepository(env.Router)
+	orderRepo := repository.NewTransactionRepository(env.Router)
 	merchantRepo := repository.NewMerchantRepository(env.Router, 16)
 	stripeMock := NewMockStripe()
 
@@ -119,7 +119,7 @@ func TestFullPaymentFlow_E2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("order %s not found after Create: %v", res.OrderID, err)
 	}
-	if landed.Status != domain.OrderStatusCreated {
+	if landed.Status != domain.TransactionStatusCreated {
 		t.Fatalf("status: got %s want created", landed.Status)
 	}
 	if landed.StripeSessionID == "" {
@@ -135,7 +135,7 @@ func TestFullPaymentFlow_E2E(t *testing.T) {
 	}
 
 	o, _ := orderRepo.GetByMerchantOrderID(context.Background(), 0, merchant.MerchantID, res.OrderID)
-	if o.Status != domain.OrderStatusPaid {
+	if o.Status != domain.TransactionStatusPaid {
 		t.Fatalf("status after webhook: got %s want paid", o.Status)
 	}
 
