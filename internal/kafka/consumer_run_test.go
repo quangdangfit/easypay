@@ -223,3 +223,29 @@ func TestRun_FallbackToPerMessageAndDLQ(t *testing.T) {
 		t.Fatalf("DLQ key = %q, want bad", string(w.writes[0].Key))
 	}
 }
+
+func TestRun_CommitError(t *testing.T) {
+	msg := kafkago.Message{Topic: "payments", Offset: 10, Key: []byte("k"), Value: []byte("v")}
+	r := &fakeReader{
+		topic:     "payments",
+		fetches:   []fakeReaderResult{{msg: msg}, {err: context.Canceled}},
+		commitErr: errors.New("commit failed"),
+	}
+	w := &fakeWriter{}
+	h := &fakeBatchHandler{}
+
+	c := &BatchConsumer{
+		Reader:    r,
+		BatchSize: 8,
+		BatchWait: 10 * time.Millisecond,
+		Handler:   h,
+		dlq:       w,
+	}
+	// Run should continue despite commit error
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !r.closed {
+		t.Fatal("reader should be closed")
+	}
+}

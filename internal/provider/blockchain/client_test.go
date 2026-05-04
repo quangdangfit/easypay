@@ -76,3 +76,18 @@ func TestEthClientPreferHTTP(t *testing.T) {
 		t.Fatal("preferHTTP should return nil when both transports are nil")
 	}
 }
+
+func TestEthClient_BlockNumberAndFilterLogs_NoClient(t *testing.T) {
+	t.Parallel()
+	c := &ethClient{}
+	// Both methods should handle nil client gracefully
+	_, err := c.BlockNumber(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no client available") {
+		t.Fatalf("BlockNumber: want no-client error, got %v", err)
+	}
+
+	_, err = c.FilterLogs(context.Background(), ethereum.FilterQuery{})
+	if err == nil || !strings.Contains(err.Error(), "no client available") {
+		t.Fatalf("FilterLogs: want no-client error, got %v", err)
+	}
+}
