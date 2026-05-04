@@ -247,3 +247,133 @@ func TestShardCount(t *testing.T) {
 		}
 	}
 }
+
+func TestInt64Default(t *testing.T) {
+	cases := []struct {
+		val  int64
+		def  int64
+		want int64
+	}{
+		{0, 100, 100},
+		{50, 100, 50},
+		{-1, 100, -1},
+	}
+	for _, c := range cases {
+		if got := int64Default(c.val, c.def); got != c.want {
+			t.Errorf("int64Default(%d, %d) = %d, want %d", c.val, c.def, got, c.want)
+		}
+	}
+}
+
+func TestIntDefault(t *testing.T) {
+	cases := []struct {
+		val  int
+		def  int
+		want int
+	}{
+		{0, 100, 100},
+		{50, 100, 50},
+		{-1, 100, -1},
+	}
+	for _, c := range cases {
+		if got := intDefault(c.val, c.def); got != c.want {
+			t.Errorf("intDefault(%d, %d) = %d, want %d", c.val, c.def, got, c.want)
+		}
+	}
+}
+
+func TestLoad_PortTooHigh(t *testing.T) {
+	yaml := `
+app:
+  port: 70000
+db:
+  dsn: "user:pass@tcp(x)/y"
+security:
+  hmac_secret: "this-is-at-least-16-chars"
+stripe:
+  mode: fake
+`
+	_, err := Load(writeYAML(t, yaml))
+	if err == nil || !strings.Contains(err.Error(), "app.port") {
+		t.Fatalf("want port error, got %v", err)
+	}
+}
+
+func TestLoad_WithShards(t *testing.T) {
+	yaml := `
+app:
+  logical_shard_count: 16
+db:
+  max_idle_conns: 10
+  max_open_conns: 50
+  shards:
+    - dsn: "user:pass@tcp(shard-0:3306)/payments"
+    - dsn: "user:pass@tcp(shard-1:3306)/payments"
+security:
+  hmac_secret: "this-is-at-least-16-chars"
+stripe:
+  mode: fake
+`
+	cfg, err := Load(writeYAML(t, yaml))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.DB.Shards) != 2 {
+		t.Errorf("shards: %d, want 2", len(cfg.DB.Shards))
+	}
+}
+
+func TestLoad_ShardCountNotDivisible(t *testing.T) {
+	yaml := `
+app:
+  logical_shard_count: 15
+db:
+  shards:
+    - dsn: "user:pass@tcp(x)/y"
+    - dsn: "user:pass@tcp(y)/z"
+security:
+  hmac_secret: "this-is-at-least-16-chars"
+stripe:
+  mode: fake
+`
+	_, err := Load(writeYAML(t, yaml))
+	if err == nil || !strings.Contains(err.Error(), "divisible") {
+		t.Fatalf("want divisibility error, got %v", err)
+	}
+}
+
+func TestLoad_ShardCountTooSmall(t *testing.T) {
+	yaml := `
+app:
+  logical_shard_count: 1
+db:
+  shards:
+    - dsn: "user:pass@tcp(x)/y"
+    - dsn: "user:pass@tcp(y)/z"
+security:
+  hmac_secret: "this-is-at-least-16-chars"
+stripe:
+  mode: fake
+`
+	_, err := Load(writeYAML(t, yaml))
+	if err == nil || !strings.Contains(err.Error(), "must be >=") {
+		t.Fatalf("want shard count error, got %v", err)
+	}
+}
+
+func TestLoad_MissingShardDSN(t *testing.T) {
+	yaml := `
+db:
+  shards:
+    - dsn: "user:pass@tcp(x)/y"
+    - dsn: ""
+security:
+  hmac_secret: "this-is-at-least-16-chars"
+stripe:
+  mode: fake
+`
+	_, err := Load(writeYAML(t, yaml))
+	if err == nil || !strings.Contains(err.Error(), "db.shards[1].dsn") {
+		t.Fatalf("want shard dsn error, got %v", err)
+	}
+}
