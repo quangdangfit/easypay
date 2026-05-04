@@ -16,8 +16,9 @@ import (
 // txStore wires a MockTransactionRepository whose behaviour is backed by an
 // in-memory map. Tests reach into byID to seed and assert state.
 type txStore struct {
-	byID map[string]*domain.Transaction
-	mock *repomock.MockTransactionRepository
+	byID      map[string]*domain.Transaction
+	getAnyErr error
+	mock      *repomock.MockTransactionRepository
 }
 
 func newTxStore(t *testing.T, seed ...*domain.Transaction) *txStore {
@@ -37,6 +38,9 @@ func newTxStore(t *testing.T, seed ...*domain.Transaction) *txStore {
 		}).AnyTimes()
 	s.mock.EXPECT().GetByOrderIDAny(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, id string) (*domain.Transaction, error) {
+			if s.getAnyErr != nil {
+				return nil, s.getAnyErr
+			}
 			if o, ok := s.byID[id]; ok {
 				return o, nil
 			}
@@ -84,6 +88,7 @@ func newEventCapture(t *testing.T) *eventCapture {
 type pendingTxStore struct {
 	byHash    map[string]*domain.OnchainTransaction
 	createErr error
+	getErr    error
 	mock      *repomock.MockOnchainTxRepository
 }
 
@@ -104,6 +109,9 @@ func newPendingTxStore(t *testing.T) *pendingTxStore {
 		}).AnyTimes()
 	s.mock.EXPECT().GetByTxHash(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, hash string) (*domain.OnchainTransaction, error) {
+			if s.getErr != nil {
+				return nil, s.getErr
+			}
 			if tx, ok := s.byHash[hash]; ok {
 				return tx, nil
 			}

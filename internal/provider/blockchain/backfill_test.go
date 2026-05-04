@@ -76,3 +76,58 @@ func TestBackfill_Run_StopsOnCancel(t *testing.T) {
 		t.Fatal("expected ctx error")
 	}
 }
+
+func TestBackfill_Persist_DuplicateTx(t *testing.T) {
+	chain := &fakeChain{}
+	repo := newPendingTxStore(t)
+	repo.byHash["0x0000000000000000000000000000000000000000000000000000000000000abc"] = &domain.OnchainTransaction{}
+	orders := newTxStore(t, &domain.Transaction{MerchantID: "M1", OrderID: "ord-1"})
+	b := NewBackfillScanner(chain, ChainConfig{ChainID: 1}, newMemCursor(), repo.mock, orders.mock)
+
+	b.persist(context.Background(), sampleLog())
+	// Should be no-op on duplicate
+	if len(repo.byHash) != 1 {
+		t.Fatalf("expected 1 tx, got %d", len(repo.byHash))
+	}
+}
+
+func TestBackfill_Persist_UnknownOrder(t *testing.T) {
+	chain := &fakeChain{}
+	repo := newPendingTxStore(t)
+	orders := newTxStore(t) // no seed
+	b := NewBackfillScanner(chain, ChainConfig{ChainID: 1}, newMemCursor(), repo.mock, orders.mock)
+
+	b.persist(context.Background(), sampleLog())
+	// Should drop unknown order
+	if len(repo.byHash) != 0 {
+		t.Fatalf("expected 0 tx, got %d", len(repo.byHash))
+	}
+}
+
+func TestBackfill_Persist_GetOrderError(t *testing.T) {
+	chain := &fakeChain{}
+	repo := newPendingTxStore(t)
+	orders := newTxStore(t)
+	orders.getAnyErr = errors.New("db error")
+	b := NewBackfillScanner(chain, ChainConfig{ChainID: 1}, newMemCursor(), repo.mock, orders.mock)
+
+	b.persist(context.Background(), sampleLog())
+	// Should drop on error
+	if len(repo.byHash) != 0 {
+		t.Fatalf("expected 0 tx on error, got %d", len(repo.byHash))
+	}
+}
+
+func TestBackfill_Persist_BadEvent(t *testing.T) {
+	chain := &fakeChain{}
+	repo := newPendingTxStore(t)
+	orders := newTxStore(t)
+	b := NewBackfillScanner(chain, ChainConfig{ChainID: 1}, newMemCursor(), repo.mock, orders.mock)
+
+	badLog := types.Log{TxHash: common.HexToHash("0xdead")} // empty topics
+	b.persist(context.Background(), badLog)
+	// Should drop bad event
+	if len(repo.byHash) != 0 {
+		t.Fatalf("expected 0 tx on bad event, got %d", len(repo.byHash))
+	}
+}

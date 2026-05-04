@@ -136,3 +136,44 @@ func TestDoubleCapped(t *testing.T) {
 		t.Errorf("cap not respected: %v", got)
 	}
 }
+
+func TestSubscriber_Run_ReconnectsOnError(t *testing.T) {
+	chain := &fakeChain{subErr: errors.New("connection lost")}
+	s := NewSubscriber(chain, ChainConfig{ChainID: 1}, newMemCursor(), newPendingTxStore(t).mock, newTxStore(t).mock)
+	s.BackoffMin = time.Millisecond
+	s.BackoffMax = 5 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	// Should eventually cancel after retrying a few times
+	if err := s.Run(ctx); !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context error, got %v", err)
+	}
+}
+
+func TestSubscriber_HandleLog_GetByTxHashError(t *testing.T) {
+	chain := &fakeChain{}
+	cur := newMemCursor()
+	repo := newPendingTxStore(t)
+	repo.getErr = errors.New("db error")
+	orders := newTxStore(t, &domain.Transaction{MerchantID: "M1", OrderID: "ord-1"})
+	s := NewSubscriber(chain, ChainConfig{ChainID: 1}, cur, repo.mock, orders.mock)
+
+	err := s.handleLog(context.Background(), sampleLog())
+	if err == nil {
+		t.Fatal("expected dedup lookup error")
+	}
+}
+
+func TestSubscriber_HandleLog_GetByOrderIDAnyError(t *testing.T) {
+	chain := &fakeChain{}
+	cur := newMemCursor()
+	repo := newPendingTxStore(t)
+	orders := newTxStore(t) // no seed
+	orders.getAnyErr = errors.New("db error")
+	s := NewSubscriber(chain, ChainConfig{ChainID: 1}, cur, repo.mock, orders.mock)
+
+	err := s.handleLog(context.Background(), sampleLog())
+	if err == nil {
+		t.Fatal("expected error from GetByOrderIDAny")
+	}
+}
