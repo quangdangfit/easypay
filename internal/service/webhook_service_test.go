@@ -12,6 +12,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/quangdangfit/easypay/internal/domain"
+	kafkamock "github.com/quangdangfit/easypay/internal/mocks/kafka"
 	repomock "github.com/quangdangfit/easypay/internal/mocks/repo"
 	"github.com/quangdangfit/easypay/internal/provider/stripe"
 )
@@ -468,5 +469,44 @@ func TestWebhook_RefundedPath_ResolveMerchantError(t *testing.T) {
 	err := svc.Process(context.Background(), body, hdr)
 	if err == nil {
 		t.Fatal("expected error when resolving merchant fails")
+	}
+}
+
+func TestWebhook_SucceededPath_LoadOrderError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockTransactionRepository(ctrl)
+	repo.EXPECT().UpdateStatus(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil)
+	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db error"))
+
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo, stubMerchants(t, 0), pub.mock, rc, sec)
+
+	body := signedEvent(t, sec, "evt_load_err", "payment_intent.succeeded", "ord-1", "pi_1")
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	err := svc.Process(context.Background(), body, hdr)
+	if err == nil {
+		t.Fatal("expected error when loading order fails")
+	}
+}
+
+func TestWebhook_RefundedPath_PublishError(t *testing.T) {
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1"})
+	ctrl := gomock.NewController(t)
+	pub := kafkamock.NewMockEventPublisher(ctrl)
+	pub.EXPECT().PublishPaymentConfirmed(gomock.Any(), gomock.Any()).
+		Return(errors.New("kafka error"))
+	pub.EXPECT().Close().Return(nil).AnyTimes()
+
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), pub, rc, sec)
+
+	body := signedEvent(t, sec, "evt_pub_err", "charge.refunded", "ord-1", "pi_1")
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	err := svc.Process(context.Background(), body, hdr)
+	if err == nil {
+		t.Fatal("expected error when publish fails")
 	}
 }
