@@ -325,3 +325,42 @@ func TestCreate_RejectsInvalidOrderID(t *testing.T) {
 		}
 	}
 }
+
+func TestCreate_RejectsZeroAmount(t *testing.T) {
+	svc, _, _ := newSvc(t)
+	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
+	_, err := svc.Create(context.Background(), CreatePaymentInput{
+		Merchant: merchant, OrderID: "order-1", Amount: 0, Currency: "USD",
+	})
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("want ErrInvalidRequest for zero amount, got %v", err)
+	}
+}
+
+func TestCreate_RejectsNegativeAmount(t *testing.T) {
+	svc, _, _ := newSvc(t)
+	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
+	_, err := svc.Create(context.Background(), CreatePaymentInput{
+		Merchant: merchant, OrderID: "order-1", Amount: -100, Currency: "USD",
+	})
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("want ErrInvalidRequest for negative amount, got %v", err)
+	}
+}
+
+func TestCreate_WithEmptyCurrency_UsesDefault(t *testing.T) {
+	svc, stripeC, _ := newSvc(t)
+	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
+	res, err := svc.Create(context.Background(), CreatePaymentInput{
+		Merchant: merchant, OrderID: "order-1", Amount: 1500, Currency: "",
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if res.OrderID == "" {
+		t.Fatal("expected successful creation with default currency")
+	}
+	if stripeC.createCalls != 1 {
+		t.Fatalf("stripe should be called once, got %d", stripeC.createCalls)
+	}
+}

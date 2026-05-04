@@ -228,3 +228,44 @@ func TestCreateRefund_StripeFails(t *testing.T) {
 		t.Fatal("expected stripe error to propagate")
 	}
 }
+
+func TestWebhook_RefundedPath_WithMetadataFallback(t *testing.T) {
+	// Refund event with payment_intent in metadata but not in top-level field
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1"})
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
+
+	// Create body with payment_intent in metadata but not in top level
+	body := []byte(`{"id":"evt_meta","type":"charge.refunded",` +
+		`"data":{"object":{"id":"ch_1","object":"charge","amount":1500,"status":"refunded",` +
+		`"metadata":{"order_id":"ord-1","merchant_id":"M1","payment_intent":"pi_1"}}}}`)
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	if err := svc.Process(context.Background(), body, hdr); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if repo.byID["M1:ord-1"].Status != domain.TransactionStatusRefunded {
+		t.Fatalf("status: %s", repo.byID["M1:ord-1"].Status)
+	}
+}
+
+func TestWebhook_RefundedPath_WithPILookup(t *testing.T) {
+	// Refund event where metadata is missing but PI lookup succeeds
+	tx := &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1"}
+	repo := newTxStore(t, tx)
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
+
+	// Create body with NO metadata but with pi_1 in the charge
+	body := []byte(`{"id":"evt_pi","type":"charge.refunded",` +
+		`"data":{"object":{"id":"ch_1","object":"charge","amount":1500,"status":"refunded",` +
+		`"payment_intent":"pi_1","metadata":{}}}}`)
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	if err := svc.Process(context.Background(), body, hdr); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if repo.byID["M1:ord-1"].Status != domain.TransactionStatusRefunded {
+		t.Fatalf("status: %s", repo.byID["M1:ord-1"].Status)
+	}
+}

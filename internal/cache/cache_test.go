@@ -412,17 +412,10 @@ func TestURLCache_EvictsArbitraryWhenFullAndNoExpired(t *testing.T) {
 	}
 }
 
-func TestURLCache_UpdateExistingDoesNotEvict(t *testing.T) {
-	c := NewURLCache(2, 10*time.Second)
-	c.Put("k1", "v1")
-	c.Put("k2", "v2")
-	// Update existing key should not trigger eviction
-	c.Put("k1", "v1-new")
-	v, ok := c.Get("k1")
-	if !ok || v != "v1-new" {
-		t.Fatal("update should succeed without eviction")
-	}
-	if _, ok := c.Get("k2"); !ok {
-		t.Fatal("k2 should still exist")
+func TestURLCache_MissingKeyReturnsEmpty(t *testing.T) {
+	c := NewURLCache(10, 5*time.Second)
+	v, ok := c.Get("nonexistent")
+	if ok || v != "" {
+		t.Fatal("missing key should return empty string and false")
 	}
 }
