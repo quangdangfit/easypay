@@ -364,3 +364,96 @@ func TestCreate_WithEmptyCurrency_UsesDefault(t *testing.T) {
 		t.Fatalf("stripe should be called once, got %d", stripeC.createCalls)
 	}
 }
+
+func TestCreate_ReconstructResult_CryptoPayment(t *testing.T) {
+	svc, _, store := newSvc(t)
+	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
+
+	// Create crypto payment first
+	_, err := svc.Create(context.Background(), CreatePaymentInput{
+		Merchant: merchant, OrderID: "crypto-1", Amount: 1000, Currency: "USD", Method: "crypto",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Now simulate idempotent retry - should reconstruct from stored row
+	res, err := svc.Create(context.Background(), CreatePaymentInput{
+		Merchant: merchant, OrderID: "crypto-1", Amount: 1000, Currency: "USD", Method: "crypto",
+	})
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if res.CryptoPayload == nil {
+		t.Fatal("expected crypto payload on retry")
+	}
+	if store.updateCheckouts != 0 {
+		t.Fatalf("should not update checkout for crypto, got %d", store.updateCheckouts)
+	}
+}
+
+func TestCreate_ReconstructResult_WithSessionID(t *testing.T) {
+	svc, _, store := newSvc(t)
+	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
+
+	// Create payment
+	res1, err := svc.Create(context.Background(), CreatePaymentInput{
+		Merchant: merchant, OrderID: "session-1", Amount: 2000, Currency: "USD",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Simulate update with session ID
+	store.byID["M1:session-1"].StripeSessionID = "cs_simulated"
+
+	// Retry - should use stored session ID
+	res2, err := svc.Create(context.Background(), CreatePaymentInput{
+		Merchant: merchant, OrderID: "session-1", Amount: 2000, Currency: "USD",
+	})
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+
+	// Should match original response
+	if res1.OrderID != res2.OrderID {
+		t.Fatalf("order_id mismatch")
+	}
+	if !strings.Contains(res2.CheckoutURL, "cs_simulated") {
+		t.Fatalf("checkout_url should use session_id, got %q", res2.CheckoutURL)
+	}
+}
+
+func TestCreate_ReconstructResult_LazyMode(t *testing.T) {
+	stripeC := newStripeStub(t)
+	store := newTxStore(t)
+	svc := NewPaymentService(stripeC.mock, store.mock, PaymentServiceOptions{
+		DefaultCurrency: "USD",
+		LazyCheckout:    true,
+		PublicBaseURL:   "https://pay.example.com",
+		CheckoutSecret:  "test-secret",
+	})
+	merchant := &domain.Merchant{MerchantID: "M1", SecretKey: "s"}
+
+	// Create lazy payment first
+	res1, err := svc.Create(context.Background(), CreatePaymentInput{
+		Merchant: merchant, OrderID: "lazy-1", Amount: 3000, Currency: "USD",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if !strings.Contains(res1.CheckoutURL, "/pay/") {
+		t.Fatalf("lazy should use hosted URL, got %q", res1.CheckoutURL)
+	}
+
+	// Retry - should reconstruct lazy URL
+	res2, err := svc.Create(context.Background(), CreatePaymentInput{
+		Merchant: merchant, OrderID: "lazy-1", Amount: 3000, Currency: "USD",
+	})
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if res1.CheckoutURL != res2.CheckoutURL {
+		t.Fatalf("lazy url should be stable, got %q vs %q", res1.CheckoutURL, res2.CheckoutURL)
+	}
+}

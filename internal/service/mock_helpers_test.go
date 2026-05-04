@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -291,4 +292,13 @@ func blockingBucket(t *testing.T) *cachemock.MockTokenBucket {
 	b := cachemock.NewMockTokenBucket(gomock.NewController(t))
 	b.EXPECT().Allow(gomock.Any()).Return(cache.ErrRateLimited).AnyTimes()
 	return b
+}
+
+// failingLocker returns a Locker mock whose Acquire always fails.
+func failingLocker(t *testing.T) *cachemock.MockLocker {
+	t.Helper()
+	l := cachemock.NewMockLocker(gomock.NewController(t))
+	l.EXPECT().Acquire(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("lock acquire failed")).AnyTimes()
+	return l
 }

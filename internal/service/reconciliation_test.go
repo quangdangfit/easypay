@@ -3,10 +3,14 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"go.uber.org/mock/gomock"
+
 	"github.com/quangdangfit/easypay/internal/domain"
+	repomock "github.com/quangdangfit/easypay/internal/mocks/repo"
 )
 
 func TestOrderReconciliation_TickForceConfirms(t *testing.T) {
@@ -109,5 +113,49 @@ func TestOrderReconciliation_RunInvokesTick(t *testing.T) {
 	_ = or.Run(ctx)
 	if order.Status != domain.TransactionStatusPaid {
 		t.Fatalf("expected tick to fire and confirm, got %s", order.Status)
+	}
+}
+
+func TestOrderReconciliation_TickFailsRequiresPaymentMethod(t *testing.T) {
+	order := &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", StripePaymentIntentID: "pi_x", Status: domain.TransactionStatusPending}
+	repo := newTxStore(t, order)
+	repo.pending = []*domain.Transaction{order}
+	r := &orderReconciliation{Orders: repo.mock, Stripe: newWebhookStripe(t, webhookStripeOpts{piStatus: "requires_payment_method"}), Publisher: newEventCapture(t).mock, BatchSize: 5}
+	_ = r.tick(context.Background())
+	if order.Status != domain.TransactionStatusFailed {
+		t.Fatalf("expected failed, got %s", order.Status)
+	}
+}
+
+func TestOrderReconciliation_TickGetPendingError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	orders := repomock.NewMockTransactionRepository(ctrl)
+	orders.EXPECT().GetPendingBefore(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db unavailable"))
+
+	r := &orderReconciliation{Orders: orders, Stripe: newWebhookStripe(t, webhookStripeOpts{}), Publisher: newEventCapture(t).mock, BatchSize: 5}
+	err := r.tick(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "list stuck orders") {
+		t.Fatalf("expected list error, got %v", err)
+	}
+}
+
+func TestOrderReconciliation_TickSuccessUpdateError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	orders := repomock.NewMockTransactionRepository(ctrl)
+	order := &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", StripePaymentIntentID: "pi_1", Status: domain.TransactionStatusPending, ShardIndex: 0}
+	orders.EXPECT().GetPendingBefore(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]*domain.Transaction{order}, nil)
+	orders.EXPECT().UpdateStatus(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(errors.New("update failed"))
+
+	r := &orderReconciliation{Orders: orders, Stripe: newWebhookStripe(t, webhookStripeOpts{}), Publisher: newEventCapture(t).mock, BatchSize: 5}
+	err := r.tick(context.Background())
+	if err != nil {
+		t.Fatalf("tick should not propagate update error, got %v", err)
+	}
+	// Status should remain unchanged since update failed
+	if order.Status != domain.TransactionStatusPending {
+		t.Fatalf("expected pending, got %s", order.Status)
 	}
 }

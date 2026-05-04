@@ -175,3 +175,29 @@ func TestResolve_LocalLRUSecondHit(t *testing.T) {
 		t.Fatalf("expected lru hit; url=%q err=%v", url, err)
 	}
 }
+
+func TestResolve_LockAcquireFailureRetries(t *testing.T) {
+	// When lock acquisition fails, the code does a 150ms sleep and retries via resolveAfterLock.
+	// For the retry to succeed, the order must have a StripeSessionID (placed there by another pod).
+	r, d := newResolverWithDeps(t, func(o *CheckoutResolverOptions) {
+		o.Locker = failingLocker(t)
+	})
+	d.repo.byID[tKey()] = &domain.Transaction{MerchantID: tMerchant, OrderID: tOrder, Amount: 1500, Currency: "USD", StripeSessionID: "cs_created_by_other"}
+	url, err := r.Resolve(context.Background(), tMerchant, tOrder)
+	if err != nil {
+		t.Fatalf("expected retry to succeed, got %v", err)
+	}
+	if url != "https://checkout.stripe.com/c/pay/cs_created_by_other" {
+		t.Fatalf("expected session from other pod, got %q", url)
+	}
+}
+
+func TestResolve_GetOrderError(t *testing.T) {
+	// Simulate GetByMerchantOrderID error on initial lookup
+	r, _ := newResolverWithDeps(t)
+	// Don't populate the repo, so GetByMerchantOrderID will return ErrNotFound
+	_, err := r.Resolve(context.Background(), tMerchant, "ord-missing")
+	if !errors.Is(err, ErrOrderNotFound) {
+		t.Fatalf("expected ErrOrderNotFound, got %v", err)
+	}
+}

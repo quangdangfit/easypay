@@ -3,13 +3,16 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/mock/gomock"
 
 	"github.com/quangdangfit/easypay/internal/domain"
+	repomock "github.com/quangdangfit/easypay/internal/mocks/repo"
 	"github.com/quangdangfit/easypay/internal/provider/stripe"
 )
 
@@ -267,5 +270,203 @@ func TestWebhook_RefundedPath_WithPILookup(t *testing.T) {
 	}
 	if repo.byID["M1:ord-1"].Status != domain.TransactionStatusRefunded {
 		t.Fatalf("status: %s", repo.byID["M1:ord-1"].Status)
+	}
+}
+
+func TestWebhook_FailedPath_MissingMetadata(t *testing.T) {
+	repo := newTxStore(t)
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
+
+	// payment_intent.payment_failed with missing metadata
+	body := []byte(`{"id":"evt_nometa","type":"payment_intent.payment_failed",` +
+		`"data":{"object":{"id":"pi_1","object":"payment_intent","amount":1500,"status":"requires_payment_method",` +
+		`"metadata":{}}}}`)
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	err := svc.Process(context.Background(), body, hdr)
+	if err == nil {
+		t.Fatal("expected error for missing metadata")
+	}
+}
+
+func TestWebhook_FailedPath_HappyPath(t *testing.T) {
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD"})
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
+
+	body := signedEvent(t, sec, "evt_fail", "payment_intent.payment_failed", "ord-1", "pi_1")
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	if err := svc.Process(context.Background(), body, hdr); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if repo.byID["M1:ord-1"].Status != domain.TransactionStatusFailed {
+		t.Fatalf("status: %s", repo.byID["M1:ord-1"].Status)
+	}
+}
+
+func TestWebhook_SucceededPath_WithPaymentIntent(t *testing.T) {
+	// Test case where metadata doesn't have payment_intent but object is payment_intent
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD"})
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
+
+	body := []byte(`{"id":"evt_pi_obj","type":"payment_intent.succeeded",` +
+		`"data":{"object":{"id":"pi_direct","object":"payment_intent","amount":1500,"status":"succeeded",` +
+		`"metadata":{"order_id":"ord-1","merchant_id":"M1"}}}}`)
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	if err := svc.Process(context.Background(), body, hdr); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if repo.byID["M1:ord-1"].Status != domain.TransactionStatusPaid {
+		t.Fatalf("status: %s", repo.byID["M1:ord-1"].Status)
+	}
+}
+
+func TestWebhook_MalformedJSON(t *testing.T) {
+	repo := newTxStore(t)
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
+
+	body := []byte(`{invalid json}`)
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	err := svc.Process(context.Background(), body, hdr)
+	if err == nil {
+		t.Fatal("expected error for malformed JSON")
+	}
+}
+
+func TestWebhook_SucceededPath_Idempotent(t *testing.T) {
+	// Test that processing the same succeeded event twice is safe
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD"})
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
+
+	body := signedEvent(t, sec, "evt_dup", "payment_intent.succeeded", "ord-1", "pi_1")
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+
+	// First call should succeed
+	if err := svc.Process(context.Background(), body, hdr); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+
+	// Second call with same event should be deduplicated by Redis
+	err := svc.Process(context.Background(), body, hdr)
+	if err != nil && !errors.Is(err, ErrWebhookDuplicate) {
+		t.Fatalf("second call should be deduplicated or succeed, got %v", err)
+	}
+}
+
+func TestWebhook_FailedPath_UpdateError(t *testing.T) {
+	repo := newTxStore(t) // Empty - will cause update to fail
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
+
+	body := signedEvent(t, sec, "evt_upd_err", "payment_intent.payment_failed", "ord-missing", "pi_1")
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	err := svc.Process(context.Background(), body, hdr)
+	if !errors.Is(err, ErrWebhookOrderMissing) {
+		t.Fatalf("want ErrWebhookOrderMissing, got %v", err)
+	}
+}
+
+func TestWebhook_SucceededPath_UnknownMerchant(t *testing.T) {
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD"})
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchantsError(t), pub.mock, rc, sec)
+
+	body := signedEvent(t, sec, "evt_unknown_merchant", "payment_intent.succeeded", "ord-1", "pi_1")
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	err := svc.Process(context.Background(), body, hdr)
+	if err == nil {
+		t.Fatal("expected error for unknown merchant")
+	}
+}
+
+func TestWebhook_SucceededPath_CrossCheckFails(t *testing.T) {
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD"})
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{piStatus: "requires_payment_method"}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
+
+	body := signedEvent(t, sec, "evt_cross_check_fail", "payment_intent.succeeded", "ord-1", "pi_1")
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	err := svc.Process(context.Background(), body, hdr)
+	if err == nil {
+		t.Fatal("expected error when cross-check fails")
+	}
+	if !strings.Contains(err.Error(), "not succeeded") {
+		t.Fatalf("expected cross-check error, got %v", err)
+	}
+}
+
+func TestWebhook_SucceededPath_GetPaymentIntentError(t *testing.T) {
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD"})
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{piErr: errors.New("stripe error")}), repo.mock, stubMerchants(t, 0), pub.mock, rc, sec)
+
+	body := signedEvent(t, sec, "evt_stripe_err", "payment_intent.succeeded", "ord-1", "pi_1")
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	err := svc.Process(context.Background(), body, hdr)
+	if err == nil {
+		t.Fatal("expected error when GetPaymentIntent fails")
+	}
+}
+
+func TestWebhook_FailedPath_UnknownMerchant(t *testing.T) {
+	repo := newTxStore(t, &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD"})
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchantsError(t), pub.mock, rc, sec)
+
+	body := signedEvent(t, sec, "evt_bad_merchant", "payment_intent.payment_failed", "ord-1", "pi_1")
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	err := svc.Process(context.Background(), body, hdr)
+	if err == nil {
+		t.Fatal("expected error for unknown merchant")
+	}
+}
+
+func TestWebhook_RefundedPath_NoMetadata_UpdateFails(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockTransactionRepository(ctrl)
+	order := &domain.Transaction{OrderID: "ord-1", MerchantID: "M1", Amount: 1500, Currency: "USD", ShardIndex: 0}
+	repo.EXPECT().GetByPaymentIntentID(gomock.Any(), "pi_1").
+		Return(order, nil)
+	repo.EXPECT().UpdateStatus(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(errors.New("update failed"))
+
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo, stubMerchants(t, 0), pub.mock, rc, sec)
+
+	body := []byte(`{"id":"evt_pi_lookup","type":"charge.refunded",` +
+		`"data":{"object":{"amount":1500,"payment_intent":"pi_1"}}}`)
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	err := svc.Process(context.Background(), body, hdr)
+	if err == nil {
+		t.Fatal("expected error when UpdateStatus fails")
+	}
+}
+
+func TestWebhook_RefundedPath_ResolveMerchantError(t *testing.T) {
+	repo := newTxStore(t)
+	pub := newEventCapture(t)
+	rc := newRedis(t)
+	svc := NewWebhookService(newWebhookStripe(t, webhookStripeOpts{}), repo.mock, stubMerchantsError(t), pub.mock, rc, sec)
+
+	body := []byte(`{"id":"evt_resolve_err","type":"charge.refunded",` +
+		`"data":{"object":{"amount":1500,"metadata":{"order_id":"ord-1","merchant_id":"M_unknown"}}}}`)
+	hdr := stripe.SignPayload(body, sec, time.Now().Unix())
+	err := svc.Process(context.Background(), body, hdr)
+	if err == nil {
+		t.Fatal("expected error when resolving merchant fails")
 	}
 }
