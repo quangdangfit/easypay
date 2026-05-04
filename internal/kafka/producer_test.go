@@ -3,6 +3,8 @@ package kafka
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -10,6 +12,44 @@ import (
 
 	"github.com/quangdangfit/easypay/internal/config"
 )
+
+type fakeAdminDialer struct {
+	dialFn func(address string) (adminConn, error)
+	calls  []string
+}
+
+func (d *fakeAdminDialer) DialContext(_ context.Context, _, address string) (adminConn, error) {
+	d.calls = append(d.calls, address)
+	if d.dialFn == nil {
+		return nil, fmt.Errorf("unexpected dial %s", address)
+	}
+	return d.dialFn(address)
+}
+
+type fakeAdminConn struct {
+	controller    kafkago.Broker
+	controllerErr error
+	createErr     error
+	createTopics  []kafkago.TopicConfig
+	closed        bool
+}
+
+func (c *fakeAdminConn) Controller() (kafkago.Broker, error) {
+	if c.controllerErr != nil {
+		return kafkago.Broker{}, c.controllerErr
+	}
+	return c.controller, nil
+}
+
+func (c *fakeAdminConn) CreateTopics(topics ...kafkago.TopicConfig) error {
+	c.createTopics = append(c.createTopics, topics...)
+	return c.createErr
+}
+
+func (c *fakeAdminConn) Close() error {
+	c.closed = true
+	return nil
+}
 
 func TestPaymentConfirmedEventEncoding(t *testing.T) {
 	e := PaymentConfirmedEvent{
@@ -81,4 +121,92 @@ func TestEnsureTopics_NoBrokers(t *testing.T) {
 
 func TestEnsureTopics_BadBroker(t *testing.T) {
 	ensureTopics([]string{"127.0.0.1:1"}, "t")
+}
+
+func TestEnsureTopicsWithDialer_NoBrokers(t *testing.T) {
+	d := &fakeAdminDialer{}
+	ensureTopicsWithDialer(context.Background(), d.DialContext, nil, "t")
+	if len(d.calls) != 0 {
+		t.Fatalf("dial calls = %d, want 0", len(d.calls))
+	}
+}
+
+func TestEnsureTopicsWithDialer_FirstDialError(t *testing.T) {
+	d := &fakeAdminDialer{
+		dialFn: func(address string) (adminConn, error) {
+			return nil, errors.New("dial failed")
+		},
+	}
+	ensureTopicsWithDialer(context.Background(), d.DialContext, []string{"broker-a:9092"}, "t")
+	if len(d.calls) != 1 || d.calls[0] != "broker-a:9092" {
+		t.Fatalf("calls = %v", d.calls)
+	}
+}
+
+func TestEnsureTopicsWithDialer_ControllerError(t *testing.T) {
+	first := &fakeAdminConn{controllerErr: errors.New("no controller")}
+	d := &fakeAdminDialer{
+		dialFn: func(address string) (adminConn, error) {
+			return first, nil
+		},
+	}
+	ensureTopicsWithDialer(context.Background(), d.DialContext, []string{"broker-a:9092"}, "t")
+	if len(d.calls) != 1 {
+		t.Fatalf("calls = %v, want one call", d.calls)
+	}
+	if !first.closed {
+		t.Fatal("first connection should be closed")
+	}
+}
+
+func TestEnsureTopicsWithDialer_SecondDialError(t *testing.T) {
+	first := &fakeAdminConn{controller: kafkago.Broker{Host: "ctrl", Port: 9093}}
+	d := &fakeAdminDialer{
+		dialFn: func(address string) (adminConn, error) {
+			if address == "broker-a:9092" {
+				return first, nil
+			}
+			return nil, errors.New("dial controller failed")
+		},
+	}
+	ensureTopicsWithDialer(context.Background(), d.DialContext, []string{"broker-a:9092"}, "t")
+	if len(d.calls) != 2 {
+		t.Fatalf("calls = %v, want two dials", d.calls)
+	}
+	if d.calls[1] != "ctrl:9093" {
+		t.Fatalf("controller dial address = %s, want ctrl:9093", d.calls[1])
+	}
+	if !first.closed {
+		t.Fatal("first connection should be closed")
+	}
+}
+
+func TestEnsureTopicsWithDialer_CreatesOnlyNonEmptyTopics(t *testing.T) {
+	first := &fakeAdminConn{controller: kafkago.Broker{Host: "ctrl", Port: 9093}}
+	second := &fakeAdminConn{}
+	d := &fakeAdminDialer{
+		dialFn: func(address string) (adminConn, error) {
+			switch address {
+			case "broker-a:9092":
+				return first, nil
+			case "ctrl:9093":
+				return second, nil
+			default:
+				return nil, fmt.Errorf("unexpected address: %s", address)
+			}
+		},
+	}
+
+	ensureTopicsWithDialer(context.Background(), d.DialContext, []string{"broker-a:9092"}, "", "topic-a", "topic-b")
+
+	want := []kafkago.TopicConfig{
+		{Topic: "topic-a", NumPartitions: 1, ReplicationFactor: 1},
+		{Topic: "topic-b", NumPartitions: 1, ReplicationFactor: 1},
+	}
+	if !reflect.DeepEqual(second.createTopics, want) {
+		t.Fatalf("CreateTopics specs = %#v, want %#v", second.createTopics, want)
+	}
+	if !first.closed || !second.closed {
+		t.Fatal("both connections should be closed")
+	}
 }

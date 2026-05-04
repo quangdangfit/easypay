@@ -39,6 +39,14 @@ type publisher struct {
 	confirmed *kafka.Writer
 }
 
+type adminConn interface {
+	Controller() (kafka.Broker, error)
+	CreateTopics(topics ...kafka.TopicConfig) error
+	Close() error
+}
+
+type adminDialFunc func(ctx context.Context, network, address string) (adminConn, error)
+
 func NewPublisher(cfg config.KafkaConfig) EventPublisher {
 	// Best-effort eager topic creation. Some Kafka distributions (e.g. the
 	// `confluent-local` image used in CI) ship with `auto.create.topics.enable`
@@ -65,11 +73,22 @@ func NewPublisher(cfg config.KafkaConfig) EventPublisher {
 // if the broker has auto-create enabled or the topic already exists, the
 // subsequent Writer call will succeed regardless.
 func ensureTopics(brokers []string, topics ...string) {
+	d := &kafka.Dialer{Timeout: 5 * time.Second}
+	dial := func(ctx context.Context, network, address string) (adminConn, error) {
+		conn, err := d.DialContext(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		return conn, nil
+	}
+	ensureTopicsWithDialer(context.Background(), dial, brokers, topics...)
+}
+
+func ensureTopicsWithDialer(ctx context.Context, dial adminDialFunc, brokers []string, topics ...string) {
 	if len(brokers) == 0 {
 		return
 	}
-	d := &kafka.Dialer{Timeout: 5 * time.Second}
-	conn, err := d.DialContext(context.Background(), "tcp", brokers[0])
+	conn, err := dial(ctx, "tcp", brokers[0])
 	if err != nil {
 		return
 	}
@@ -79,7 +98,7 @@ func ensureTopics(brokers []string, topics ...string) {
 	if err != nil {
 		return
 	}
-	ctrlConn, err := d.DialContext(context.Background(), "tcp", fmt.Sprintf("%s:%d", controller.Host, controller.Port))
+	ctrlConn, err := dial(ctx, "tcp", fmt.Sprintf("%s:%d", controller.Host, controller.Port))
 	if err != nil {
 		return
 	}

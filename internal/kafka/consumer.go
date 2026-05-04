@@ -17,13 +17,25 @@ import (
 // Handler, then commits offsets only on success. Failed batches fall back
 // to per-message handling and dead-letter routing.
 type BatchConsumer struct {
-	Reader    *kafka.Reader
+	Reader    messageReader
 	Brokers   []string
 	DLQTopic  string
 	BatchSize int
 	BatchWait time.Duration
 	Handler   BatchHandler
-	dlq       *kafka.Writer
+	dlq       messageWriter
+}
+
+type messageReader interface {
+	FetchMessage(ctx context.Context) (kafka.Message, error)
+	CommitMessages(ctx context.Context, msgs ...kafka.Message) error
+	Close() error
+	Config() kafka.ReaderConfig
+}
+
+type messageWriter interface {
+	WriteMessages(ctx context.Context, msgs ...kafka.Message) error
+	Close() error
 }
 
 type BatchHandler interface {
