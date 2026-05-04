@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -280,5 +281,148 @@ func TestRateLimiter_RemainingCount(t *testing.T) {
 	ok2, remaining2, _ := rl.Allow(ctx, "M1", 5, time.Minute)
 	if !ok2 || remaining2 != 0 {
 		t.Fatalf("should allow 5th call, remaining=%d", remaining2)
+	}
+}
+
+// --- Additional coverage for edge cases ---
+
+func TestURLCache_ConcurrentAccess(t *testing.T) {
+	c := NewURLCache(100, 5*time.Second)
+	c.Put("k1", "v1")
+
+	// Multiple concurrent reads should not panic
+	for i := 0; i < 10; i++ {
+		go func() {
+			c.Get("k1")
+		}()
+	}
+
+	// Concurrent writes
+	for i := 0; i < 5; i++ {
+		go func(i int) {
+			c.Put(fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
+		}(i)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	if v, ok := c.Get("k1"); !ok || v != "v1" {
+		t.Fatal("concurrent access broke cache")
+	}
+}
+
+func TestRateLimiter_LargeLimit(t *testing.T) {
+	rc, _ := rclient(t)
+	rl := NewRateLimiter(rc)
+	ctx := context.Background()
+
+	// Test with very large limit
+	ok, remaining, err := rl.Allow(ctx, "huge", 10000, time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("should allow: err=%v", err)
+	}
+	if remaining != 9999 {
+		t.Fatalf("remaining: %d, want 9999", remaining)
+	}
+}
+
+func TestTokenBucket_ExactCapacity(t *testing.T) {
+	rc, _ := rclient(t)
+	b := NewTokenBucket(rc, "exact", 5, 10.0) // 5 capacity, 10 tokens/sec
+	ctx := context.Background()
+
+	// Fill exactly to capacity
+	for i := 0; i < 5; i++ {
+		if err := b.Allow(ctx); err != nil {
+			t.Fatalf("call %d should allow: %v", i, err)
+		}
+	}
+
+	// Next should fail
+	if err := b.Allow(ctx); err == nil {
+		t.Fatal("should be rate limited at capacity")
+	}
+}
+
+func TestRateLimiter_WindowBoundary(t *testing.T) {
+	rc, _ := rclient(t)
+	rl := NewRateLimiter(rc)
+	ctx := context.Background()
+
+	// Use up the limit
+	for i := 0; i < 3; i++ {
+		rl.Allow(ctx, "boundary", 3, 100*time.Millisecond)
+	}
+
+	// Should be blocked
+	ok, _, _ := rl.Allow(ctx, "boundary", 3, 100*time.Millisecond)
+	if ok {
+		t.Fatal("should be blocked")
+	}
+
+	// Wait for window to expire
+	time.Sleep(150 * time.Millisecond)
+
+	// Should be allowed again
+	ok, _, _ = rl.Allow(ctx, "boundary", 3, 100*time.Millisecond)
+	if !ok {
+		t.Fatal("should be allowed after window expires")
+	}
+}
+
+// --- URL cache eviction ---
+
+func TestURLCache_EvictsExpiredWhenFull(t *testing.T) {
+	c := NewURLCache(2, 100*time.Millisecond)
+	c.Put("k1", "v1")
+	time.Sleep(150 * time.Millisecond)
+	c.Put("k2", "v2")
+	// Cache is now full with k1 expired and k2 fresh
+	c.Put("k3", "v3")
+	// Should have evicted expired k1, so cache has k2, k3
+	if _, ok := c.Get("k1"); ok {
+		t.Fatal("expired k1 should have been evicted")
+	}
+	if _, ok := c.Get("k2"); !ok {
+		t.Fatal("fresh k2 should still exist")
+	}
+	if _, ok := c.Get("k3"); !ok {
+		t.Fatal("new k3 should exist")
+	}
+}
+
+func TestURLCache_EvictsArbitraryWhenFullAndNoExpired(t *testing.T) {
+	c := NewURLCache(2, 10*time.Second)
+	c.Put("k1", "v1")
+	c.Put("k2", "v2")
+	// Cache is full with two non-expired entries
+	c.Put("k3", "v3")
+	// Should have evicted one arbitrary entry (k1 or k2)
+	count := 0
+	if _, ok := c.Get("k1"); ok {
+		count++
+	}
+	if _, ok := c.Get("k2"); ok {
+		count++
+	}
+	if _, ok := c.Get("k3"); !ok {
+		t.Fatal("new k3 should exist")
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly one of k1/k2 to remain, got %d", count)
+	}
+}
+
+func TestURLCache_UpdateExistingDoesNotEvict(t *testing.T) {
+	c := NewURLCache(2, 10*time.Second)
+	c.Put("k1", "v1")
+	c.Put("k2", "v2")
+	// Update existing key should not trigger eviction
+	c.Put("k1", "v1-new")
+	v, ok := c.Get("k1")
+	if !ok || v != "v1-new" {
+		t.Fatal("update should succeed without eviction")
+	}
+	if _, ok := c.Get("k2"); !ok {
+		t.Fatal("k2 should still exist")
 	}
 }

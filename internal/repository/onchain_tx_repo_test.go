@@ -129,3 +129,24 @@ func TestOnchainTxRepo_ListPendingByChain_Error(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestOnchainTxRepo_UpdateConfirmations_DBError(t *testing.T) {
+	db, mock := newMockDB(t)
+	repo := NewOnchainTxRepository(NewSingleShardRouter(db, 16))
+	mock.ExpectExec("UPDATE onchain_transactions").
+		WillReturnError(errors.New("database error"))
+	err := repo.UpdateConfirmations(context.Background(), "0xabc", 5, domain.OnchainTxStatusPending)
+	if err == nil {
+		t.Fatal("expected database error")
+	}
+}
+
+func TestOnchainTxRepo_GetByTxHash_DBError(t *testing.T) {
+	db, mock := newMockDB(t)
+	repo := NewOnchainTxRepository(NewSingleShardRouter(db, 16))
+	mock.ExpectQuery("FROM onchain_transactions").WillReturnError(errors.New("database error"))
+	_, err := repo.GetByTxHash(context.Background(), "0xabc")
+	if err == nil {
+		t.Fatal("expected database error")
+	}
+}

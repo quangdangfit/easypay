@@ -193,3 +193,37 @@ func TestLRUCache_TTLAndEviction(t *testing.T) {
 		t.Fatalf("cap exceeded: %d", count)
 	}
 }
+
+func TestMerchantRepo_Insert_QueryError(t *testing.T) {
+	db, mock := newMockDB(t)
+	repo := NewMerchantRepository(NewSingleShardRouter(db, 16), 16)
+	mock.ExpectQuery("SELECT shard_index, COUNT").
+		WillReturnError(errors.New("query error"))
+	err := repo.Insert(context.Background(), &domain.Merchant{MerchantID: "M1", Name: "T", APIKey: "k", SecretKey: "s"})
+	if err == nil {
+		t.Fatal("expected error from query")
+	}
+}
+
+func TestMerchantRepo_Insert_ScanError(t *testing.T) {
+	db, mock := newMockDB(t)
+	repo := NewMerchantRepository(NewSingleShardRouter(db, 16), 16)
+	mock.ExpectQuery("SELECT shard_index, COUNT").
+		WillReturnRows(sqlmock.NewRows([]string{"shard_index", "n"}).
+			AddRow("invalid", "not_a_number"))
+	err := repo.Insert(context.Background(), &domain.Merchant{MerchantID: "M1", Name: "T", APIKey: "k", SecretKey: "s"})
+	if err == nil {
+		t.Fatal("expected scan error")
+	}
+}
+
+func TestMerchantRepo_GetByMerchantID_QueryError(t *testing.T) {
+	db, mock := newMockDB(t)
+	repo := NewMerchantRepository(NewSingleShardRouter(db, 16), 16)
+	mock.ExpectQuery("FROM merchants WHERE merchant_id").
+		WithArgs("M1").WillReturnError(errors.New("query error"))
+	_, err := repo.GetByMerchantID(context.Background(), "M1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
