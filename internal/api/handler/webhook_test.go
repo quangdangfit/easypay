@@ -52,6 +52,19 @@ func TestWebhook_InvalidReturns400(t *testing.T) {
 	}
 }
 
+func TestWebhook_OrderMissingReturns500(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	svc := svcmock.NewMockWebhooks(ctrl)
+	svc.EXPECT().Process(gomock.Any(), gomock.Any(), gomock.Any()).Return(service.ErrWebhookOrderMissing)
+
+	app := fiber.New()
+	app.Post("/webhook/stripe", NewWebhookHandler(svc).Stripe)
+	resp, _ := app.Test(httptest.NewRequest("POST", "/webhook/stripe", strings.NewReader("{}")))
+	if resp.StatusCode != 500 {
+		t.Fatalf("status %d, want 500 for order missing", resp.StatusCode)
+	}
+}
+
 func TestPrometheusHandler(t *testing.T) {
 	app := fiber.New()
 	app.Get("/metrics", PrometheusHandler())

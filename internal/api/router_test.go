@@ -100,3 +100,26 @@ func TestNewRouter_MerchantAPIRunsHMACAndRateLimit(t *testing.T) {
 		t.Fatalf("status=%d, want 401 from HMACAuth", resp.StatusCode)
 	}
 }
+
+// Test optional handlers mounting conditions
+func TestNewRouter_WebhookNotMountedWhenNil(t *testing.T) {
+	app := NewRouter(Deps{
+		Health: handler.NewHealthHandler(nil, nil, nil),
+		// Webhook: nil
+	})
+	resp, _ := app.Test(httptest.NewRequest("POST", "/webhook/stripe", strings.NewReader("{}")))
+	if resp.StatusCode != 404 {
+		t.Fatalf("webhook should not be mounted, got status=%d", resp.StatusCode)
+	}
+}
+
+func TestNewRouter_PaymentNotMountedWhenNil(t *testing.T) {
+	app := NewRouter(Deps{
+		Health: handler.NewHealthHandler(nil, nil, nil),
+		// Payment: nil
+	})
+	resp, _ := app.Test(httptest.NewRequest("POST", "/api/payments", strings.NewReader("{}")))
+	if resp.StatusCode != 404 {
+		t.Fatalf("payment route should not be mounted, got status=%d (no auth, so 404 expected)", resp.StatusCode)
+	}
+}

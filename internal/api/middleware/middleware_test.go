@@ -159,3 +159,67 @@ func TestHMAC_RejectsSuspended(t *testing.T) {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
 }
+
+func TestHMAC_RejectsFutureTimestamp(t *testing.T) {
+	merchant := &domain.Merchant{MerchantID: "M1", APIKey: "k", SecretKey: "s", Status: domain.MerchantStatusActive}
+	app := authApp(t, merchant)
+	body := "{}"
+	future := strconv.FormatInt(time.Now().Add(1*time.Hour).Unix(), 10)
+	req := httptest.NewRequest("POST", "/", strings.NewReader(body))
+	req.Header.Set(HeaderAPIKey, "k")
+	req.Header.Set(HeaderTimestamp, future)
+	req.Header.Set(HeaderSignature, sign("s", future, body))
+	resp, _ := app.Test(req)
+	if resp.StatusCode != 401 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+}
+
+func TestHMAC_RejectsMissingAPIKey(t *testing.T) {
+	app := authApp(t, nil)
+	body := "{}"
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	req := httptest.NewRequest("POST", "/", strings.NewReader(body))
+	req.Header.Set(HeaderTimestamp, ts)
+	req.Header.Set(HeaderSignature, "sig")
+	resp, _ := app.Test(req)
+	if resp.StatusCode != 401 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+}
+
+func TestHMAC_RejectsMissingTimestamp(t *testing.T) {
+	app := authApp(t, nil)
+	req := httptest.NewRequest("POST", "/", strings.NewReader("{}"))
+	req.Header.Set(HeaderAPIKey, "k")
+	req.Header.Set(HeaderSignature, "sig")
+	resp, _ := app.Test(req)
+	if resp.StatusCode != 401 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+}
+
+func TestHMAC_RejectsMissingSignature(t *testing.T) {
+	app := authApp(t, nil)
+	req := httptest.NewRequest("POST", "/", strings.NewReader("{}"))
+	req.Header.Set(HeaderAPIKey, "k")
+	req.Header.Set(HeaderTimestamp, strconv.FormatInt(time.Now().Unix(), 10))
+	resp, _ := app.Test(req)
+	if resp.StatusCode != 401 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+}
+
+func TestHMAC_RejectsUnknownAPIKey(t *testing.T) {
+	app := authApp(t, nil)
+	body := "{}"
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	req := httptest.NewRequest("POST", "/", strings.NewReader(body))
+	req.Header.Set(HeaderAPIKey, "unknown-key")
+	req.Header.Set(HeaderTimestamp, ts)
+	req.Header.Set(HeaderSignature, sign("s", ts, body))
+	resp, _ := app.Test(req)
+	if resp.StatusCode != 401 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+}

@@ -71,6 +71,15 @@ func TestRateLimiter_ZeroLimitDeniesAll(t *testing.T) {
 	}
 }
 
+func TestRateLimiter_NegativeLimitDeniesAll(t *testing.T) {
+	rc, _ := rclient(t)
+	rl := NewRateLimiter(rc)
+	ok, remaining, err := rl.Allow(context.Background(), "M4", -1, time.Minute)
+	if err != nil || ok || remaining != 0 {
+		t.Fatalf("ok=%v remaining=%d err=%v", ok, remaining, err)
+	}
+}
+
 // --- locker ---
 
 func TestLocker_AcquireAndReleaseAllowsReacquire(t *testing.T) {
@@ -127,5 +136,95 @@ func TestTokenBucket_AllowsThenBlocks(t *testing.T) {
 	}
 	if err := b.Allow(ctx); !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("expected ErrRateLimited, got %v", err)
+	}
+}
+
+// --- URL cache ---
+
+func TestURLCache_StoreAndRetrieve(t *testing.T) {
+	c := NewURLCache(10, 5*time.Second)
+	c.Put("k", "https://example.com")
+	if v, ok := c.Get("k"); !ok || v != "https://example.com" {
+		t.Fatalf("cache miss or wrong value: %v", v)
+	}
+}
+
+func TestURLCache_MissWhenEmpty(t *testing.T) {
+	c := NewURLCache(10, 5*time.Second)
+	if _, ok := c.Get("missing"); ok {
+		t.Fatal("expected cache miss")
+	}
+}
+
+func TestURLCache_ExpiresAfterTTL(t *testing.T) {
+	c := NewURLCache(10, 100*time.Millisecond)
+	c.Put("k", "https://example.com")
+	time.Sleep(150 * time.Millisecond)
+	if _, ok := c.Get("k"); ok {
+		t.Fatal("expected expiration")
+	}
+}
+
+func TestURLCache_InvalidateRemovesEntry(t *testing.T) {
+	c := NewURLCache(10, 5*time.Second)
+	c.Put("k", "https://example.com")
+	c.Invalidate("k")
+	if _, ok := c.Get("k"); ok {
+		t.Fatal("expected invalidation to remove entry")
+	}
+}
+
+// --- locker error cases ---
+
+func TestLocker_AcquireHandlesRedisError(t *testing.T) {
+	rc, mr := rclient(t)
+	l := NewLocker(rc)
+	ctx := context.Background()
+
+	mr.Close() // break redis
+	_, err := l.Acquire(ctx, "key", time.Minute)
+	if err == nil {
+		t.Fatal("expected error on closed redis")
+	}
+}
+
+func TestLocker_ReleaseHandlesRedisError(t *testing.T) {
+	rc, mr := rclient(t)
+	l := NewLocker(rc)
+	ctx := context.Background()
+
+	lk, _ := l.Acquire(ctx, "key", time.Minute)
+	mr.Close()
+	err := lk.Release(ctx)
+	if err == nil {
+		t.Fatal("expected error on closed redis")
+	}
+}
+
+// --- rate limiter error cases ---
+
+func TestRateLimiter_AllowHandlesRedisError(t *testing.T) {
+	rc, mr := rclient(t)
+	rl := NewRateLimiter(rc)
+	ctx := context.Background()
+
+	mr.Close()
+	_, _, err := rl.Allow(ctx, "M1", 5, time.Minute)
+	if err == nil {
+		t.Fatal("expected error on closed redis")
+	}
+}
+
+// --- token bucket error cases ---
+
+func TestTokenBucket_AllowHandlesRedisError(t *testing.T) {
+	rc, mr := rclient(t)
+	b := NewTokenBucket(rc, "k", 3, 1)
+	ctx := context.Background()
+
+	mr.Close()
+	err := b.Allow(ctx)
+	if err == nil {
+		t.Fatal("expected error on closed redis")
 	}
 }

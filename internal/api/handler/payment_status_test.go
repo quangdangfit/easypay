@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http/httptest"
 	"testing"
 
@@ -77,6 +78,75 @@ func TestPaymentStatus_RejectsMissingMerchant(t *testing.T) {
 	app.Get("/api/payments/:id", h.Get)
 	resp, _ := app.Test(httptest.NewRequest("GET", "/api/payments/x", nil))
 	if resp.StatusCode != 401 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+}
+
+func TestPaymentStatus_RejectsMissingID(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockTransactionRepository(ctrl)
+
+	app := newStatusApp(repo, "M1")
+	resp, _ := app.Test(httptest.NewRequest("GET", "/api/payments/", nil))
+	if resp.StatusCode != 404 {
+		t.Fatalf("status %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestPaymentStatus_InternalError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockTransactionRepository(ctrl)
+	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("db error"))
+
+	app := newStatusApp(repo, "M1")
+	resp, _ := app.Test(httptest.NewRequest("GET", "/api/payments/ord-1", nil))
+	if resp.StatusCode != 500 {
+		t.Fatalf("status %d, want 500", resp.StatusCode)
+	}
+}
+
+func TestPaymentStatus_IncludesStripeSessionURL(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockTransactionRepository(ctrl)
+	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), "M1", "ord-1").
+		Return(&domain.Transaction{
+			OrderID:         "ord-1",
+			MerchantID:      "M1",
+			Amount:          1500,
+			Currency:        "USD",
+			Status:          domain.TransactionStatusPaid,
+			StripeSessionID: "cs_test_123",
+		}, nil)
+
+	app := newStatusApp(repo, "M1")
+	resp, err := app.Test(httptest.NewRequest("GET", "/api/payments/ord-1", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+}
+
+func TestPaymentStatus_EmptyStripeSessionIDOmitsURL(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	repo := repomock.NewMockTransactionRepository(ctrl)
+	repo.EXPECT().GetByMerchantOrderID(gomock.Any(), gomock.Any(), "M1", "ord-1").
+		Return(&domain.Transaction{
+			OrderID:    "ord-1",
+			MerchantID: "M1",
+			Amount:     1500,
+			Currency:   "USD",
+			Status:     domain.TransactionStatusCreated,
+		}, nil)
+
+	app := newStatusApp(repo, "M1")
+	resp, err := app.Test(httptest.NewRequest("GET", "/api/payments/ord-1", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
 }
