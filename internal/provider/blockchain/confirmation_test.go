@@ -127,6 +127,44 @@ func TestConfirmation_Tick_BlockNumberError(t *testing.T) {
 	}
 }
 
+// latest < BlockNumber: receipt arrived but the local view of the chain head
+// hasn't caught up. Must early-return without touching state.
+func TestConfirmation_ProcessOne_LatestBehindBlock(t *testing.T) {
+	pendingRepo := newPendingTxStore(t)
+	tx := &domain.OnchainTransaction{
+		TxHash: "0xabc", BlockNumber: 200, RequiredConfirm: 12,
+		Status: domain.OnchainTxStatusPending,
+	}
+	pendingRepo.byHash[tx.TxHash] = tx
+	chain := &fakeChain{receipts: map[common.Hash]*types.Receipt{common.HexToHash("0xabc"): receiptOK()}}
+	tracker := NewConfirmationTracker(chain, ChainConfig{}, pendingRepo.mock, newTxStore(t).mock, newEventCapture(t).mock)
+	tracker.processOne(context.Background(), tx, 100) // latest 100 < tx.BlockNumber 200
+	if tx.Status != domain.OnchainTxStatusPending {
+		t.Fatalf("status should remain pending, got %s", tx.Status)
+	}
+	if tx.Confirmations != 0 {
+		t.Fatalf("confirmations should be untouched, got %d", tx.Confirmations)
+	}
+}
+
+// Order lookup error → log + return without state change.
+func TestConfirmation_ProcessOne_OrderLookupError(t *testing.T) {
+	pendingRepo := newPendingTxStore(t)
+	tx := &domain.OnchainTransaction{
+		TxHash: "0xabc", BlockNumber: 50, RequiredConfirm: 12, OrderID: "ord-1",
+		Amount: big.NewInt(1500), Status: domain.OnchainTxStatusPending,
+	}
+	pendingRepo.byHash[tx.TxHash] = tx
+	chain := &fakeChain{receipts: map[common.Hash]*types.Receipt{common.HexToHash("0xabc"): receiptOK()}}
+	orders := newTxStore(t)
+	orders.getAnyErr = errors.New("db down")
+	tracker := NewConfirmationTracker(chain, ChainConfig{}, pendingRepo.mock, orders.mock, newEventCapture(t).mock)
+	tracker.processOne(context.Background(), tx, 100)
+	if tx.Status != domain.OnchainTxStatusPending {
+		t.Fatalf("status should remain pending on order lookup error, got %s", tx.Status)
+	}
+}
+
 func TestConfirmation_Run_StopsOnCancel(t *testing.T) {
 	tracker := NewConfirmationTracker(&fakeChain{blockNum: 100}, ChainConfig{ChainID: 1}, newPendingTxStore(t).mock, newTxStore(t).mock, newEventCapture(t).mock)
 	tracker.BlockTime = 5 * time.Millisecond

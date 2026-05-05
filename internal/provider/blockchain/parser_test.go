@@ -52,3 +52,29 @@ func TestParsePaymentEvent_RejectsShortLog(t *testing.T) {
 		t.Fatal("expected error for empty log")
 	}
 }
+
+// Topics present but data shorter than 64 bytes — must reject.
+func TestParsePaymentEvent_RejectsShortData(t *testing.T) {
+	lg := types.Log{
+		Topics: []common.Hash{{}, {}, {}},
+		Data:   make([]byte, 32), // < 64
+	}
+	if _, err := ParsePaymentEvent(lg); err == nil {
+		t.Fatal("expected ErrUnexpectedLog for short data")
+	}
+}
+
+// trimZero on an all-zero slice returns nil, producing an empty OrderID.
+func TestParsePaymentEvent_AllZeroOrderID(t *testing.T) {
+	lg := types.Log{
+		Topics: []common.Hash{{}, {}, {}}, // topic[1] all zeros
+		Data:   make([]byte, 64),
+	}
+	parsed, err := ParsePaymentEvent(lg)
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if parsed.OrderID != "" {
+		t.Fatalf("expected empty OrderID, got %q", parsed.OrderID)
+	}
+}

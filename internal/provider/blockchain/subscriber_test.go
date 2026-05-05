@@ -164,6 +164,21 @@ func TestSubscriber_HandleLog_GetByTxHashError(t *testing.T) {
 	}
 }
 
+// EventTopic set → runOnce builds a topic filter (covers the topic-set branch).
+func TestSubscriber_RunOnce_TopicFilterBranch(t *testing.T) {
+	chain := &fakeChain{}
+	cfg := ChainConfig{ChainID: 1, EventTopic: common.HexToHash("0xeventsig")}
+	s := NewSubscriber(chain, cfg, newMemCursor(), newPendingTxStore(t).mock, newTxStore(t).mock)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if err := s.runOnce(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got %v", err)
+	}
+	if !chain.subscribed {
+		t.Fatal("expected SubscribeFilterLogs to be called")
+	}
+}
+
 func TestSubscriber_HandleLog_GetByOrderIDAnyError(t *testing.T) {
 	chain := &fakeChain{}
 	cur := newMemCursor()

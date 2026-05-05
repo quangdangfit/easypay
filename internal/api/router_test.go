@@ -123,3 +123,53 @@ func TestNewRouter_PaymentNotMountedWhenNil(t *testing.T) {
 		t.Fatalf("payment route should not be mounted, got status=%d (no auth, so 404 expected)", resp.StatusCode)
 	}
 }
+
+// All optional handlers wired — exercises every conditional mount branch
+// in NewRouter (Webhook, Checkout, Payment, PaymentStatus, Refund). Without
+// merchant auth/rate-limiter deps the merchant API group runs without
+// middleware, so the request reaches the handler.
+func TestNewRouter_AllOptionalHandlersMounted(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	payments := svcmock.NewMockPayments(ctrl)
+	webhooks := svcmock.NewMockWebhooks(ctrl)
+	checkouts := svcmock.NewMockCheckouts(ctrl)
+	txRepo := repomock.NewMockTransactionRepository(ctrl)
+	// Handlers may invoke their service; we only care that routes exist.
+	webhooks.EXPECT().Process(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	webhooks.EXPECT().CreateRefund(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	payments.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	checkouts.EXPECT().Resolve(gomock.Any(), gomock.Any(), gomock.Any()).Return("", nil).AnyTimes()
+	txRepo.EXPECT().GetByTransactionID(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
+	app := NewRouter(Deps{
+		Health:        handler.NewHealthHandler(nil, nil, nil),
+		Payment:       handler.NewPaymentHandler(payments),
+		PaymentStatus: handler.NewPaymentStatusHandler(txRepo),
+		Refund:        handler.NewRefundHandler(webhooks),
+		Webhook:       handler.NewWebhookHandler(webhooks),
+		Checkout:      handler.NewCheckoutHandler(checkouts, ""),
+	})
+
+	// All these routes must be mounted (status != 404). Body/auth correctness
+	// is the handler's concern; we only assert the route exists.
+	cases := []struct {
+		method, path string
+	}{
+		{"POST", "/webhook/stripe"},
+		{"GET", "/pay/m1/o1"},
+		{"GET", "/checkout/success"},
+		{"GET", "/checkout/cancel"},
+		{"POST", "/api/payments"},
+		{"GET", "/api/payments/abc"},
+		{"POST", "/api/payments/abc/refund"},
+	}
+	for _, c := range cases {
+		resp, err := app.Test(httptest.NewRequest(c.method, c.path, strings.NewReader("{}")))
+		if err != nil {
+			t.Fatalf("%s %s: %v", c.method, c.path, err)
+		}
+		if resp.StatusCode == 404 {
+			t.Fatalf("%s %s: route not mounted (404)", c.method, c.path)
+		}
+	}
+}
